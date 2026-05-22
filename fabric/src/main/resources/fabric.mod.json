@@ -1,0 +1,56 @@
+{
+	"schemaVersion": 1,
+	"id": "moemusic",
+	"version": "${version}",
+	"name": "MoeMusic",
+	"description": "Server-synced music streaming for Minecraft.",
+	"authors": [
+		"KoishiMoe"
+	],
+	"contact": {
+		"homepage": "https://github.com/lolicode-org/MoeMusic",
+		"sources": "https://github.com/lolicode-org/MoeMusic",
+		"issues": "https://github.com/lolicode-org/MoeMusic/issues"
+	},
+	"license": "AGPL-3.0-or-later",
+	"icon": "assets/moemusic/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			{
+				"value": "org.lolicode.moemusic.MoeMusic",
+				"adapter": "kotlin"
+			}
+		],
+		"client": [
+			{
+				"value": "org.lolicode.moemusic.client.MoeMusicClient",
+				"adapter": "kotlin"
+			}
+		],
+		"modmenu": [
+			"org.lolicode.moemusic.client.MoeMusicModMenuIntegration"
+		]
+	},
+	"mixins": [
+		"moemusic.mixins.json",
+		{
+			"config": "moemusic.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": "*",
+		"minecraft": ">=26.1",
+		"java": ">=25",
+		"fabric-api": "*",
+		"fabric-language-kotlin": ">=1.11.0",
+		"badpackets": ">=0.12.0"
+
+	},
+	"suggests": {
+		"cloth-config": ">=26.0",
+		"fabric-permissions-api-v0": ">=0.7.0",
+		"modmenu": ">17.999"
+	}
+}

@@ -1,0 +1,48 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'zulu'
+
+      - name: setup gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: build mod jars from published shared artifacts
+        run: ./gradlew -Pmoemusic.useCompositeShared=false build --stacktrace
+
+      - name: upload fabric jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: fabric
+          archive: false
+          path: build/libs/*-fabric-*.jar
+
+      - name: upload neoforge jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: neoforge
+          archive: false
+          path: build/libs/*-neoforge-*.jar
