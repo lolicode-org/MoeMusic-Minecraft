@@ -1,0 +1,87 @@
+name: publish mods
+
+on:
+  workflow_dispatch:
+    inputs:
+      loader_fabric:
+        description: 'Publish Fabric jar'
+        type: boolean
+        required: false
+        default: true
+      loader_forge:
+        description: 'Publish Forge jar'
+        type: boolean
+        required: false
+        default: true
+      version_type:
+        description: 'Release channel'
+        type: choice
+        options: [stable, beta, alpha]
+        required: true
+        default: 'stable'
+      dry_run:
+        description: 'Build and validate publish tasks without uploading'
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'zulu'
+
+      - name: setup gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          selected_loaders=()
+          if [[ "${{ inputs.loader_fabric }}" == "true" ]]; then
+            selected_loaders+=("fabric")
+          fi
+          if [[ "${{ inputs.loader_forge }}" == "true" ]]; then
+            selected_loaders+=("forge")
+          fi
+          loaders="$(IFS=,; echo "${selected_loaders[*]}")"
+
+          if [[ -z "$loaders" ]]; then
+            echo "No loaders selected." >&2
+            exit 1
+          fi
+
+          chmod +x ./gradlew
+          commitish="$(git rev-parse HEAD)"
+
+          ./gradlew \
+            -Pmoemusic.useCompositeShared=false \
+            -Pmoemusic.publish.destinations=github,modrinth,curseforge \
+            -Pmoemusic.publish.loaders="$loaders" \
+            -Pmoemusic.publish.type="${{ inputs.version_type }}" \
+            -Pmoemusic.publish.branch="$GITHUB_REF_NAME" \
+            -Pmoemusic.publish.commitish="$commitish" \
+            -Pmoemusic.publish.changelogFile=CHANGELOG.md \
+            -Pmoemusic.publish.dryRun="${{ inputs.dry_run }}" \
+            buildModJars publishMods --stacktrace
