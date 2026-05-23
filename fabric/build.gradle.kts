@@ -11,6 +11,7 @@ plugins {
 }
 
 val libsCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
+val modArtifactBaseName = rootProject.extra["moemusic.artifactBaseName"] as String
 val generatedBuildInfoDir = layout.buildDirectory.dir("generated/sources/moemusicBuildInfo/main/kotlin")
 
 val commonMainKotlinDir = rootProject.layout.projectDirectory.dir("platform-common/src/main/kotlin")
@@ -233,7 +234,7 @@ val installShadowJar by tasks.registering(ShadowJar::class) {
 tasks.remapJar {
     dependsOn(installShadowJar)
     inputFile.set(installShadowJar.flatMap { it.archiveFile })
-    archiveBaseName.set("${rootProject.name}-fabric")
+    archiveBaseName.set("$modArtifactBaseName-fabric")
     archiveVersion.set(project.version.toString())
     archiveClassifier.set("")
     destinationDirectory.set(rootProject.layout.buildDirectory.dir("libs"))

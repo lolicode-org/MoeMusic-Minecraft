@@ -20,6 +20,7 @@ plugins {
 }
 
 val libsCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
+val modArtifactBaseName = rootProject.extra["moemusic.artifactBaseName"] as String
 val modId = "moemusic"
 val modName = "MoeMusic"
 val modLicense = "AGPL-3.0-or-later"
@@ -159,7 +160,7 @@ val generateMoeMusicPlatformBuildInfo by tasks.registering {
 }
 
 base {
-    archivesName.set("${rootProject.name}-forge-dev")
+    archivesName.set("$modArtifactBaseName-forge-dev")
 }
 
 java {
@@ -404,7 +405,7 @@ tasks.withType<JavaExec>().configureEach {
 
 val installShadowJar by tasks.registering(ShadowJar::class) {
     dependsOn(tasks.named("jar"))
-    archiveBaseName.set("${rootProject.name}-forge")
+    archiveBaseName.set("$modArtifactBaseName-forge")
     archiveClassifier.set("dev-shadow")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     configurations = listOf(installShade)
@@ -464,7 +465,7 @@ val reobfInstallJar = renamer.classes("reobfInstallJar", installShadowJar) {
     dependsOn(installShadowJar)
     naiveSrg.set(true)
     accessTransformers.set(true)
-    output.set(rootProject.layout.buildDirectory.file("libs/${rootProject.name}-forge-${project.version}.jar"))
+    output.set(rootProject.layout.buildDirectory.file("libs/$modArtifactBaseName-forge-${project.version}.jar"))
 }
 
 tasks.withType<JavaCompile>().configureEach {
