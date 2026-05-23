@@ -5,7 +5,6 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback
 import net.fabricmc.loader.api.FabricLoader
 import org.lolicode.moemusic.MoeMusic
 import org.lolicode.moemusic.MoeMusicFabricBuildInfo
@@ -17,7 +16,6 @@ import org.lolicode.moemusic.platform.client.playback.ClientPlaybackHandler
 import org.lolicode.moemusic.platform.client.ui.config.ConfigScreenAccess
 import org.lolicode.moemusic.platform.client.ui.config.MoeMusicConfigScreen
 import org.lolicode.moemusic.platform.client.network.ClientNetworkSetup
-import org.lolicode.moemusic.platform.client.ui.NowPlayingHud
 
 object MoeMusicClient : ClientModInitializer {
 
@@ -49,9 +47,6 @@ object MoeMusicClient : ClientModInitializer {
 
         // Register S→C packet receivers
         ClientNetworkSetup.register()
-
-        // 1.21.1 still uses the old Fabric HUD render callback surface.
-        HudRenderCallback.EVENT.register(NowPlayingHud::render)
 
         keyBindings = MoeMusicClientKeyBindingRegistry.register(KeyBindingHelper::registerKeyBinding)
 

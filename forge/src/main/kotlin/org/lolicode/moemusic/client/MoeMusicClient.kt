@@ -1,12 +1,10 @@
 package org.lolicode.moemusic.client
 
 import net.minecraft.client.Minecraft
-import net.minecraftforge.api.distmarker.Dist
 import net.minecraftforge.client.ConfigScreenHandler
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent
-import net.minecraftforge.client.event.RegisterKeyMappingsEvent
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent
-import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay
+import net.minecraftforge.client.event.RegisterKeyMappingsEvent
 import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.event.GameShuttingDownEvent
 import net.minecraftforge.event.TickEvent
@@ -98,7 +96,7 @@ object MoeMusicClient {
 
     private fun onAddGuiOverlayLayers(event: RegisterGuiOverlaysEvent) {
         ensureInitialized()
-        event.registerBelow(VanillaGuiOverlay.SUBTITLES.id(), "now_playing") { _, guiGraphics, partialTick, _, _ ->
+        event.registerBelowAll("now_playing") { _, guiGraphics, partialTick, _, _ ->
             NowPlayingHud.render(guiGraphics, partialTick)
         }
     }
