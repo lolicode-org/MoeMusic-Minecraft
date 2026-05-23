@@ -18,6 +18,7 @@ mod-publish-plugin = "2.0.0-beta.1"
 
 # Minecraft and loader targets.
 minecraft = "1.21.1"
+minecraft-publish-versions = "1.21,1.21.1"
 neoforge = "21.1.228"
 forge = "1.21.1-52.1.14"
 minecraft-version-range = "[1.21,1.21.2)"

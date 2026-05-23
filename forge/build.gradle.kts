@@ -16,6 +16,7 @@ plugins {
 }
 
 val libsCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
+val modArtifactBaseName = rootProject.extra["moemusic.artifactBaseName"] as String
 val modId = "moemusic"
 val modName = "MoeMusic"
 val modLicense = "AGPL-3.0-or-later"
@@ -140,7 +141,7 @@ val generateMoeMusicPlatformBuildInfo by tasks.registering {
 }
 
 base {
-    archivesName.set("${rootProject.name}-forge-dev")
+    archivesName.set("$modArtifactBaseName-forge-dev")
 }
 
 java {
