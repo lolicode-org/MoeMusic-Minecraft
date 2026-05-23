@@ -4,8 +4,8 @@ moemusic-api = "1.0.0"
 moemusic-core = "1.0.0"
 moemusic-client-core = "1.0.0"
 moemusic-platform-common = "1.0.0-26.1"
-moemusic-fabric = "1.0.0-26.1"
-moemusic-neoforge = "1.0.0-26.1"
+moemusic-fabric = "1.0.1-26.1"
+moemusic-neoforge = "1.0.1-26.1"
 
 # Kotlin and build tooling.
 kotlin = "2.3.21"
