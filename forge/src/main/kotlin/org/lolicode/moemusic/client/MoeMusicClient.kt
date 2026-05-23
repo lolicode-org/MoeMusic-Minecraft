@@ -2,7 +2,6 @@ package org.lolicode.moemusic.client
 
 import net.minecraft.client.Minecraft
 import net.minecraft.resources.ResourceLocation
-import net.minecraftforge.api.distmarker.Dist
 import net.minecraftforge.client.ConfigScreenHandler
 import net.minecraftforge.client.event.AddGuiOverlayLayersEvent
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent
@@ -100,9 +99,9 @@ object MoeMusicClient {
     private fun onAddGuiOverlayLayers(event: AddGuiOverlayLayersEvent) {
         ensureInitialized()
         event.layeredDraw.addBelow(
-            ForgeLayeredDraw.POST_SLEEP_STACK,
+            ForgeLayeredDraw.PRE_SLEEP_STACK,
             ResourceLocation.fromNamespaceAndPath(MoeMusic.MOD_ID, "now_playing"),
-            ForgeLayeredDraw.SUBTITLE_OVERLAY,
+            ForgeLayeredDraw.CAMERA_OVERLAY,
             NowPlayingHud::render,
         )
     }

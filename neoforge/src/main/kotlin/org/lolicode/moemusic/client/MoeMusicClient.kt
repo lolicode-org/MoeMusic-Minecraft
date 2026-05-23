@@ -13,7 +13,6 @@ import net.neoforged.neoforge.client.event.ClientTickEvent
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory
-import net.neoforged.neoforge.client.gui.VanillaGuiLayers
 import net.neoforged.neoforge.common.NeoForge
 import net.neoforged.neoforge.event.GameShuttingDownEvent
 import org.lolicode.moemusic.MoeMusic
@@ -52,12 +51,11 @@ object MoeMusicClient {
             ConfigScreenAccess.register(MoeMusicConfigScreen::build)
             modContainer.registerExtensionPoint(
                 IConfigScreenFactory::class.java,
-                Supplier {
-                    IConfigScreenFactory { _, parent ->
-                        ConfigScreenAccess.buildOrFallback(parent)
-                    }
-                },
-            )
+            ) {
+                IConfigScreenFactory { _, parent ->
+                    ConfigScreenAccess.buildOrFallback(parent)
+                }
+            }
         }
 
         ClientNetworkSetup.register()
@@ -82,8 +80,7 @@ object MoeMusicClient {
     }
 
     private fun onRegisterGuiLayers(event: RegisterGuiLayersEvent) {
-        event.registerBelow(
-            VanillaGuiLayers.SUBTITLE_OVERLAY,
+        event.registerBelowAll(
             ResourceLocation.fromNamespaceAndPath(MoeMusic.MOD_ID, "now_playing"),
             NowPlayingHud::render,
         )
