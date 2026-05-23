@@ -216,6 +216,7 @@ data class ModPublishArtifact(
     val displayLoader: String,
     val version: String,
     val file: Provider<RegularFile>,
+    val buildTask: Any,
 )
 
 val selectedModArtifacts = listOfNotNull(
@@ -225,17 +226,24 @@ val selectedModArtifacts = listOfNotNull(
             "Fabric",
             fabricModVersion,
             layout.buildDirectory.file("libs/${rootProject.name}-fabric-$fabricModVersion.jar"),
+            ":fabric:remapJar",
         )
     } else {
         null
     },
     if (requested("forge", requestedLoaders)) {
-        ModPublishArtifact("forge", "Forge", forgeModVersion, buildForgeFullJar.flatMap { it.archiveFile })
+        ModPublishArtifact("forge", "Forge", forgeModVersion, buildForgeFullJar.flatMap { it.archiveFile }, buildForgeFullJar)
     } else {
         null
     },
     if (requested("neoforge", requestedLoaders)) {
-        ModPublishArtifact("neoforge", "NeoForge", neoForgeModVersion, buildNeoForgeFullJar.flatMap { it.archiveFile })
+        ModPublishArtifact(
+            "neoforge",
+            "NeoForge",
+            neoForgeModVersion,
+            buildNeoForgeFullJar.flatMap { it.archiveFile },
+            buildNeoForgeFullJar,
+        )
     } else {
         null
     },
@@ -371,7 +379,20 @@ tasks.named(BasePlugin.ASSEMBLE_TASK_NAME) {
 }
 
 tasks.named("publishMods") {
-    dependsOn("buildModJars")
+    dependsOn(selectedModArtifacts.map { it.buildTask })
+}
+
+tasks.matching { it.name == "publishGithub" }.configureEach {
+    dependsOn(selectedModArtifacts.map { it.buildTask })
+}
+
+selectedModArtifacts.forEach { artifact ->
+    tasks.matching {
+        it.name == "publishModrinth${artifact.displayLoader}" ||
+            it.name == "publishCurseforge${artifact.displayLoader}"
+    }.configureEach {
+        dependsOn(artifact.buildTask)
+    }
 }
 
 allprojects {
