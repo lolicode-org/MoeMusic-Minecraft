@@ -53,8 +53,8 @@ object MoeMusicClient : ClientModInitializer {
         ClientNetworkSetup.register()
 
         // Register the Now Playing HUD overlay
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.SUBTITLES,
+        HudElementRegistry.attachElementBefore(
+            VanillaHudElements.MISC_OVERLAYS,
             Identifier.fromNamespaceAndPath(MoeMusic.MOD_ID, "now_playing"),
             NowPlayingHud::extractRenderState,
         )
