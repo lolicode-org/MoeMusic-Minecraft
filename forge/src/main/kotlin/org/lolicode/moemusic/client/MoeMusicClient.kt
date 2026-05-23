@@ -4,7 +4,6 @@ import net.minecraft.client.Minecraft
 import net.minecraftforge.client.ClientRegistry
 import net.minecraftforge.client.ConfigGuiHandler
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent
-import net.minecraftforge.client.gui.ForgeIngameGui
 import net.minecraftforge.client.gui.OverlayRegistry
 import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.event.TickEvent
@@ -102,7 +101,7 @@ object MoeMusicClient {
     private fun registerHudOverlay() {
         if (overlayRegistered) return
         overlayRegistered = true
-        OverlayRegistry.registerOverlayBelow(ForgeIngameGui.SUBTITLES_ELEMENT, "moemusic_now_playing") { _, poseStack, partialTick, _, _ ->
+        OverlayRegistry.registerOverlayBottom("moemusic_now_playing") { _, poseStack, partialTick, _, _ ->
             NowPlayingHud.render(poseStack, partialTick)
         }
     }
