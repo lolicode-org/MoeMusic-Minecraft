@@ -16,6 +16,8 @@ plugins {
 }
 
 val libsCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
+val modArtifactBaseName = providers.gradleProperty("moemusic.artifactBaseName").orElse("moemusic").get()
+extra["moemusic.artifactBaseName"] = modArtifactBaseName
 
 fun catalogVersion(alias: String): String =
     libsCatalog.findVersion(alias).orElseThrow {
@@ -41,6 +43,28 @@ fun csvProperty(name: String, defaultValue: String): Set<String> =
 fun requested(name: String, requestedValues: Set<String>): Boolean =
     "all" in requestedValues || name.lowercase(Locale.ROOT) in requestedValues
 
+fun csvValues(csv: String): List<String> =
+    csv.split(",")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+
+fun displayMinecraftVersions(csv: String): String {
+    val versions = csvValues(csv)
+    return when (versions.size) {
+        0 -> csv
+        1 -> versions.single()
+        else -> "${versions.first()}-${versions.last()}"
+    }
+}
+
+fun baseVersion(version: String, suffixes: List<String>): String =
+    suffixes
+        .asSequence()
+        .filter { it.isNotBlank() }
+        .map { version.removeSuffix("-$it") }
+        .firstOrNull { it != version }
+        ?: version
+
 fun nonBlankEnvironmentVariable(name: String) =
     providers.provider {
         System.getenv(name)?.takeIf { it.isNotBlank() }
@@ -48,6 +72,43 @@ fun nonBlankEnvironmentVariable(name: String) =
 
 val requestedLoaders = csvProperty("moemusic.publish.loaders", "fabric,neoforge")
 val requestedDestinations = csvProperty("moemusic.publish.destinations", "github,modrinth,curseforge")
+val publishesExternalKotlinForForge =
+    libsCatalog.findLibrary("kotlin-forge").isPresent || libsCatalog.findLibrary("kotlin-neoforge").isPresent
+
+fun requiredPublishDependencies(loader: String): List<String> =
+    when (loader) {
+        "fabric" -> listOf("fabric-api", "fabric-language-kotlin", "badpackets")
+        "forge", "neoforge" -> if (publishesExternalKotlinForForge) {
+            listOf("badpackets", "kotlin-for-forge")
+        } else {
+            listOf("badpackets")
+        }
+        else -> emptyList()
+    }
+
+fun optionalModrinthDependencies(loader: String): List<String> =
+    when (loader) {
+        "fabric" -> listOf("cloth-config", "fabric-permissions-api", "luckperms", "modmenu")
+        "forge", "neoforge" -> listOf("cloth-config", "luckperms")
+        else -> emptyList()
+    }
+
+fun optionalCurseforgeDependencies(loader: String): List<String> =
+    when (loader) {
+        "fabric" -> listOf("cloth-config", "luckperms", "modmenu")
+        "forge", "neoforge" -> listOf("cloth-config", "luckperms")
+        else -> emptyList()
+    }
+
+fun incompatiblePublishDependencies(loader: String): List<String> =
+    when (loader) {
+        "forge", "neoforge" -> if (publishesExternalKotlinForForge) {
+            emptyList()
+        } else {
+            listOf("kotlin-for-forge")
+        }
+        else -> emptyList()
+    }
 
 val shadedLibraries by configurations.creating {
     isCanBeResolved = true
@@ -76,7 +137,7 @@ val buildFabricFullJar by tasks.registering(ShadowJar::class) {
     )
 
     dependsOn(moduleJars)
-    archiveBaseName.set("${rootProject.name}-fabric")
+    archiveBaseName.set("$modArtifactBaseName-fabric")
     archiveVersion.set(fabricModVersion)
     destinationDirectory.set(layout.buildDirectory.dir("libs"))
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -140,7 +201,7 @@ val buildNeoForgeFullJar by tasks.registering(ShadowJar::class) {
     )
 
     dependsOn(moduleJars)
-    archiveBaseName.set("${rootProject.name}-neoforge")
+    archiveBaseName.set("$modArtifactBaseName-neoforge")
     archiveVersion.set(neoForgeModVersion)
     destinationDirectory.set(layout.buildDirectory.dir("libs"))
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -255,7 +316,22 @@ val publishCommitish = providers.gradleProperty("moemusic.publish.commitish")
     .orElse(providers.environmentVariable("GITHUB_SHA"))
     .orElse(publishBranch)
 val publishMinecraftVersions = providers.gradleProperty("moemusic.publish.minecraftVersions")
-    .orElse(catalogVersion("minecraft"))
+    .orElse(catalogVersion("minecraft-publish-versions"))
+val publishMinecraftVersionDisplay = providers.gradleProperty("moemusic.publish.minecraftVersionDisplay")
+    .orElse(providers.provider { displayMinecraftVersions(publishMinecraftVersions.get()) })
+val publishDisplayVersion = providers.gradleProperty("moemusic.publish.displayVersion")
+    .orElse(
+        providers.provider {
+            baseVersion(
+                publishVersion.get(),
+                listOf(publishBranchVersion, catalogVersion("minecraft")) + csvValues(publishMinecraftVersions.get()),
+            )
+        },
+    )
+val publishDisplayNameOverride = providers.gradleProperty("moemusic.publish.displayName")
+val githubDisplayName = providers.gradleProperty("moemusic.publish.github.displayName")
+    .orElse(publishDisplayNameOverride)
+    .orElse(providers.provider { "MoeMusic ${publishDisplayVersion.get()} for Minecraft ${publishMinecraftVersionDisplay.get()}" })
 val publishJavaVersion = providers.gradleProperty("moemusic.publish.javaVersion").orElse("25").get().toInt()
 val publishChangelog = providers.provider {
     providers.gradleProperty("moemusic.publish.changelogFile").orNull
@@ -265,6 +341,17 @@ val publishChangelog = providers.provider {
         ?: "See repository history for changes."
 }
 val primaryModArtifact = selectedModArtifacts.first()
+
+fun siteDisplayName(artifact: ModPublishArtifact): Provider<String> =
+    providers.gradleProperty("moemusic.publish.${artifact.loader}.displayName")
+        .orElse(providers.gradleProperty("moemusic.publish.site.displayName"))
+        .orElse(publishDisplayNameOverride)
+        .orElse(
+            providers.provider {
+                "MoeMusic ${publishDisplayVersion.get()} for Minecraft ${publishMinecraftVersionDisplay.get()} " +
+                    "(${artifact.displayLoader})"
+            },
+        )
 
 publishMods {
     file.set(primaryModArtifact.jarTask.flatMap { it.archiveFile })
@@ -277,12 +364,7 @@ publishMods {
         },
     )
     version.set(publishVersion)
-    displayName.set(
-        providers.gradleProperty("moemusic.publish.displayName").orElse(
-            "MoeMusic ${publishVersion.get()} " +
-                "(${publishMinecraftVersions.get()}, ${selectedModArtifacts.joinToString(" + ") { it.displayLoader }})",
-        ),
-    )
+    displayName.set(githubDisplayName)
     changelog.set(publishChangelog)
     modLoaders.addAll(selectedModArtifacts.map { it.loader })
     dryRun.set(providers.gradleProperty("moemusic.publish.dryRun").map { it.toBoolean() }.orElse(false))
@@ -307,6 +389,7 @@ publishMods {
         selectedModArtifacts.forEach { artifact ->
             modrinth("modrinth${artifact.displayLoader}") {
                 file.set(artifact.jarTask.flatMap { it.archiveFile })
+                displayName.set(siteDisplayName(artifact))
                 accessToken.set(nonBlankEnvironmentVariable("MODRINTH_TOKEN"))
                 projectId.set(
                     providers.gradleProperty("moemusic.publish.modrinth.projectId")
@@ -314,6 +397,15 @@ publishMods {
                 )
                 modLoaders.set(listOf(artifact.loader))
                 minecraftVersionList(publishMinecraftVersions.get())
+                requiredPublishDependencies(artifact.loader).takeIf { it.isNotEmpty() }?.let {
+                    requires(*it.toTypedArray())
+                }
+                optionalModrinthDependencies(artifact.loader).takeIf { it.isNotEmpty() }?.let {
+                    optional(*it.toTypedArray())
+                }
+                incompatiblePublishDependencies(artifact.loader).takeIf { it.isNotEmpty() }?.let {
+                    incompatible(*it.toTypedArray())
+                }
             }
         }
     }
@@ -322,6 +414,7 @@ publishMods {
         selectedModArtifacts.forEach { artifact ->
             curseforge("curseforge${artifact.displayLoader}") {
                 file.set(artifact.jarTask.flatMap { it.archiveFile })
+                displayName.set(siteDisplayName(artifact))
                 accessToken.set(nonBlankEnvironmentVariable("CURSEFORGE_TOKEN"))
                 projectId.set(
                     providers.gradleProperty("moemusic.publish.curseforge.projectId")
@@ -330,6 +423,15 @@ publishMods {
                 modLoaders.set(listOf(artifact.loader))
                 minecraftVersionList(publishMinecraftVersions.get())
                 javaVersions.add(JavaVersion.toVersion(publishJavaVersion))
+                requiredPublishDependencies(artifact.loader).takeIf { it.isNotEmpty() }?.let {
+                    requires(*it.toTypedArray())
+                }
+                optionalCurseforgeDependencies(artifact.loader).takeIf { it.isNotEmpty() }?.let {
+                    optional(*it.toTypedArray())
+                }
+                incompatiblePublishDependencies(artifact.loader).takeIf { it.isNotEmpty() }?.let {
+                    incompatible(*it.toTypedArray())
+                }
             }
         }
     }

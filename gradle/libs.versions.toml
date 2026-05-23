@@ -16,6 +16,7 @@ mod-publish-plugin = "2.0.0-beta.1"
 
 # Minecraft and loader targets.
 minecraft = "26.1.2"
+minecraft-publish-versions = "26.1,26.1.1,26.1.2"
 neoforge = "26.1.2.45-beta"
 minecraft-version-range = "[26.1,26.2)"
 fabric-loader = "0.19.2"
