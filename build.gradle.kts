@@ -183,6 +183,12 @@ val buildNeoForgeFullJar by tasks.registering(ShadowJar::class) {
         "**/lavaplayer/source/vimeo/**",
         "**/lavaplayer/source/yamusic/**",
         "**/lavaplayer/source/youtube/**",
+        "natives/android-armhf/**",
+        "natives/android-x86/**",
+        "natives/android-x86-64/**",
+        "natives/linux-aarch32/**",
+        "natives/linux-arm/**",
+        "natives/linux-armhf/**",
     )
 
     listOf(
@@ -251,6 +257,12 @@ val buildForgeFullJar by tasks.registering(ShadowJar::class) {
         "**/lavaplayer/source/vimeo/**",
         "**/lavaplayer/source/yamusic/**",
         "**/lavaplayer/source/youtube/**",
+        "natives/android-armhf/**",
+        "natives/android-x86/**",
+        "natives/android-x86-64/**",
+        "natives/linux-aarch32/**",
+        "natives/linux-arm/**",
+        "natives/linux-armhf/**",
     )
 
     listOf(
