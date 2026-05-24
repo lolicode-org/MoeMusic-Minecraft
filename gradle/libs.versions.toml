@@ -1,7 +1,7 @@
 [versions]
 # MoeMusic module and consumed shared-artifact versions.
 moemusic-api = "1.0.0"
-moemusic-core = "1.0.0"
+moemusic-core = "1.1.0"
 moemusic-client-core = "1.0.0"
 moemusic-platform-common = "1.0.1-1.21.1"
 moemusic-fabric = "1.0.1-1.21.1"
@@ -44,7 +44,6 @@ fabric-permissions-api = "0.3.1"
 luckperms-api = "5.4"
 
 # Runtime libraries used directly by platform code.
-lavaplayer = "2.3.0-beta.2"
 kotlinx-coroutines = "1.10.2"
 
 # Tests.
@@ -86,7 +85,6 @@ luckperms-api = { module = "net.luckperms:api", version.ref = "luckperms-api" } 
 sponge-mixin = { module = "net.fabricmc:sponge-mixin", version.ref = "sponge-mixin" }
 
 # Runtime libraries used directly by platform code.
-lavaplayer = { module = "org.lolicode:lavaplayer", version.ref = "lavaplayer" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 
 # MoeMusic shared artifacts for non-composite builds.
