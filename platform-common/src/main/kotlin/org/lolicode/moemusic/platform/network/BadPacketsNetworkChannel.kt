@@ -49,9 +49,9 @@ class BadPacketsNetworkChannel(
             PacketIds.IDENTIFIER_SUBMIT_RESPONSE,
             PacketIds.SELECTION_SUBMIT_RESPONSE,
             PacketIds.SYNC_RESPONSE,
-            PacketIds.SERVER_HANDSHAKE,
+            PacketIds.SERVER_WELCOME,
             PacketIds.PLAY_TRACK,
-            PacketIds.SYNC_STATE,
+            PacketIds.PLAYBACK_SNAPSHOT_UPDATE,
             PacketIds.STATE_UPDATE,
             PacketIds.SEARCH_RESPONSE,
             PacketIds.QUEUE_RESPONSE,
@@ -138,7 +138,7 @@ class BadPacketsNetworkChannel(
     internal companion object {
 
         private val STANDBY_OR_UNREGISTERED_DIRECT_PACKET_IDS = setOf(
-            PacketIds.SERVER_HANDSHAKE,
+            PacketIds.SERVER_WELCOME,
             PacketIds.TRACK_SUBMIT_RESPONSE,
             PacketIds.IDENTIFIER_SUBMIT_RESPONSE,
             PacketIds.SELECTION_SUBMIT_RESPONSE,

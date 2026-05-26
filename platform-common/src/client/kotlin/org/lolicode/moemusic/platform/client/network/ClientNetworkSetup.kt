@@ -19,11 +19,11 @@ import org.lolicode.moemusic.core.protocol.proto.QueueRemoveResponse
 import org.lolicode.moemusic.core.protocol.proto.QueueResponse
 import org.lolicode.moemusic.core.protocol.proto.SearchResponse
 import org.lolicode.moemusic.core.protocol.proto.SelectionSubmitResponse
-import org.lolicode.moemusic.core.protocol.proto.ServerHandshake
+import org.lolicode.moemusic.core.protocol.proto.ServerWelcome
 import org.lolicode.moemusic.core.protocol.proto.StateUpdate
 import org.lolicode.moemusic.core.protocol.proto.SyncRequest
 import org.lolicode.moemusic.core.protocol.proto.SyncResponse
-import org.lolicode.moemusic.core.protocol.proto.SyncState
+import org.lolicode.moemusic.core.protocol.proto.PlaybackSnapshotUpdate
 import org.lolicode.moemusic.core.protocol.proto.TrackSubmitResponse
 import org.lolicode.moemusic.platform.client.playback.ClientPlaybackHandler
 import org.slf4j.LoggerFactory
@@ -64,9 +64,9 @@ object ClientNetworkSetup {
             PacketIds.IDENTIFIER_SUBMIT_RESPONSE,
             PacketIds.SELECTION_SUBMIT_RESPONSE,
             PacketIds.SYNC_RESPONSE,
-            PacketIds.SERVER_HANDSHAKE,
+            PacketIds.SERVER_WELCOME,
             PacketIds.PLAY_TRACK,
-            PacketIds.SYNC_STATE,
+            PacketIds.PLAYBACK_SNAPSHOT_UPDATE,
             PacketIds.STATE_UPDATE,
             PacketIds.SEARCH_RESPONSE,
             PacketIds.QUEUE_RESPONSE,
@@ -96,9 +96,9 @@ object ClientNetworkSetup {
             ClientPlaybackHandler.handlePlayTrack(PlayTrack.ADAPTER.decode(bytes))
         }
 
-        registerReceiver(PacketIds.SYNC_STATE) { buf ->
+        registerReceiver(PacketIds.PLAYBACK_SNAPSHOT_UPDATE) { buf ->
             val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleSyncState(SyncState.ADAPTER.decode(bytes))
+            ClientPlaybackHandler.handlePlaybackSnapshotUpdate(PlaybackSnapshotUpdate.ADAPTER.decode(bytes))
         }
 
         registerReceiver(PacketIds.STATE_UPDATE) { buf ->
@@ -111,9 +111,9 @@ object ClientNetworkSetup {
             ClientPlaybackHandler.handleSyncResponse(SyncResponse.ADAPTER.decode(bytes))
         }
 
-        registerReceiver(PacketIds.SERVER_HANDSHAKE) { buf ->
+        registerReceiver(PacketIds.SERVER_WELCOME) { buf ->
             val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleServerHandshake(ServerHandshake.ADAPTER.decode(bytes))
+            ClientPlaybackHandler.handleServerWelcome(ServerWelcome.ADAPTER.decode(bytes))
         }
 
         registerReceiver(PacketIds.SEARCH_RESPONSE) { buf ->
@@ -166,7 +166,6 @@ object ClientNetworkSetup {
     fun startSyncLoop() {
         if (syncJob?.isActive == true) return
         syncJob = scope.launch {
-            delay(5_000.milliseconds) // Initial settling delay
             while (isActive) {
                 try {
                     ClientPlaybackHandler.sendSyncRequest()
