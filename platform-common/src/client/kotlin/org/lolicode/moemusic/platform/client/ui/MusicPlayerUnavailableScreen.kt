@@ -6,6 +6,8 @@ import com.mojang.blaze3d.vertex.PoseStack
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.network.chat.Component
 import org.lolicode.moemusic.clientcore.playback.AvailabilityIssue
+import org.lolicode.moemusic.clientcore.playback.toLocalizedText
+import org.lolicode.moemusic.platform.client.i18n.ClientLocalization
 import org.lolicode.moemusic.platform.client.playback.ClientPlaybackHandler
 
 /**
@@ -41,7 +43,7 @@ class MusicPlayerUnavailableScreen(
     override fun render(poseStack: PoseStack, mouseX: Int, mouseY: Int, delta: Float) {
         val context = GuiGraphics(poseStack, width, height)
         renderBackground(poseStack)
-        context.drawCenteredString(font, McText.translatable(titleKey(currentIssue())), width / 2, 40, 0xFFFFFFFF.toInt())
+        context.drawCenteredString(font, titleComponent(currentIssue()), width / 2, 40, 0xFFFFFFFF.toInt())
         context.drawWordWrap(
             font,
             bodyComponent(currentIssue()),
@@ -75,12 +77,17 @@ class MusicPlayerUnavailableScreen(
     private fun currentIssue(): AvailabilityIssue =
         ClientPlaybackHandler.currentAvailabilityIssue() ?: fallbackIssue
 
-    private fun titleKey(issue: AvailabilityIssue): String = when (issue) {
-        AvailabilityIssue.SERVER_MISSING -> "screen.moemusic.unavailable.title"
+    private fun titleComponent(issue: AvailabilityIssue): Component = when (issue) {
+        AvailabilityIssue.SERVER_MISSING -> McText.translatable("screen.moemusic.unavailable.title")
+        AvailabilityIssue.SERVER_REJECTED -> McText.translatable("screen.moemusic.unavailable.rejected.title")
     }
 
     private fun bodyComponent(issue: AvailabilityIssue): Component = when (issue) {
         AvailabilityIssue.SERVER_MISSING ->
             McText.translatable("screen.moemusic.unavailable.body")
+        AvailabilityIssue.SERVER_REJECTED ->
+            ClientPlaybackHandler.lastServerWelcomeRejection
+                ?.let { ClientLocalization.component(it.toLocalizedText()) }
+                ?: McText.translatable("screen.moemusic.unavailable.rejected.body")
     }
 }
