@@ -1,11 +1,11 @@
 [versions]
 # MoeMusic module and consumed shared-artifact versions.
 moemusic-api = "1.0.0"
-moemusic-core = "1.1.0"
+moemusic-core = "1.2.0"
 moemusic-client-core = "1.0.0"
-moemusic-platform-common = "1.1.0-1.19"
-moemusic-fabric = "1.1.0-1.19"
-moemusic-forge = "1.1.0-1.19"
+moemusic-platform-common = "1.2.0-1.19"
+moemusic-fabric = "1.2.0-1.19"
+moemusic-forge = "1.2.0-1.19"
 
 # Kotlin and build tooling.
 kotlin = "2.3.21"

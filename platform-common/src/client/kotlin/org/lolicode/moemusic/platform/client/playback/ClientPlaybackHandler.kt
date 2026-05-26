@@ -42,7 +42,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * Client-side packet handler for all music playback control packets.
  *
- * Receives [PlayTrack], [SyncState], [StateUpdate], and [SyncResponse] from the server,
+ * Receives [PlayTrack], [PlaybackSnapshotUpdate], [StateUpdate], and [SyncResponse] from the server,
  * then drives [ClientAudioPlayer].
  *
  * Maintains [serverClockOffset] (nanoseconds to add to [System.nanoTime] to estimate the
@@ -142,6 +142,9 @@ object ClientPlaybackHandler {
     var serverClockOffset: Long = 0L
         private set
 
+    @Volatile
+    private var timeSyncEstablished: Boolean = false
+
     /** Current client-side view of the playback state. Updated by incoming packets. */
     @Volatile
     var currentContext: TrackContext? = null
@@ -169,6 +172,9 @@ object ClientPlaybackHandler {
     @Volatile
     var serverHandshakeReceived: Boolean = false
         private set
+
+    @Volatile
+    private var serverSessionAccepted: Boolean = false
 
     /** The most recent [QueueResponse] received from the server. Null until a queue request is made. */
     @Volatile
@@ -317,137 +323,31 @@ object ClientPlaybackHandler {
     // -------------------------------------------------------------------------
 
     /**
-     * Handle a [PlayTrack] packet: compute seek offset using the server clock and start
-     * [ClientAudioPlayer].
+     * Handle a [PlayTrack] packet: apply the server's anchored playback snapshot.
      */
     fun handlePlayTrack(msg: PlayTrack) {
-        if (!canHandlePlaybackPackets()) return
-        val trackProto = msg.track ?: return
-        val playback = msg.playback?.toApi() ?: run {
-            logger.error("Playback packet for '{}' is missing playback details; refusing to start audio.", trackProto.title)
-            return
-        }
-        val track = trackProto.toApi().withLyrics(msg.lyric_lrc, msg.secondary_lyric_lrc)
-
-        if (playback.url.isBlank()) {
-            logger.error("Playback packet for '{}' is missing a playable URL; refusing to start audio.", track.title)
-            stopActivePlayback()
-            return
-        }
-        if (!applyClientMediaPolicy(track, playback.url)) {
-            stopActivePlayback()
-            return
-        }
-        val locallyAllowedTrack = applyLocalContentFilter(track) ?: run {
-            stopActivePlayback()
-            return
-        }
-        if (!ensurePlaybackLock()) return
-        val serverNow = currentServerMonotonicNow()
-        val seekMs = computeSeekMs(msg.server_start_monotonic, serverNow)
-        currentLyrics = parseLyrics(locallyAllowedTrack.lyricLrc)
-        currentSecondaryLyrics = parseLyrics(locallyAllowedTrack.secondaryLyricLrc)
-        logger.debug("PlayTrack: '{}' seekMs={}", locallyAllowedTrack.title, seekMs)
-        ClientAudioPlayer.play(playback, seekMs)
-        VanillaSoundBlocker.stopBlockedSoundsIfNeeded()
-        currentContext = TrackContext(
-            track = locallyAllowedTrack,
-            playback = playback,
-            state = PlaybackState.Playing(seekMs),
-            serverStartMonotonic = msg.server_start_monotonic,
-            serverResumeMonotonic = serverNow,
-        )
-        CoreEvents.bus.fire(
-            OnClientPlaybackStarted(
-                track = locallyAllowedTrack,
-                playback = playback,
-                positionMs = seekMs,
-                fromSyncState = false,
-            )
-        )
-        guiListener?.onPlaybackStateChanged()
+        applyPlaybackSnapshot(msg.snapshot ?: return, fromSyncState = false)
     }
 
     /**
-     * Handle a [SyncState] packet (sent to late-joining clients or on reconnect).
-     * Logic mirrors [handlePlayTrack] but also handles the paused case.
+     * Handle a full snapshot update for a newly active client.
      */
-    fun handleSyncState(msg: SyncState) {
-        if (!canHandlePlaybackPackets()) return
-        val trackProto = msg.track ?: return
-        val playback = msg.playback?.toApi() ?: run {
-            logger.error("SyncState for '{}' is missing playback details; refusing to start audio.", trackProto.title)
+    fun handlePlaybackSnapshotUpdate(msg: PlaybackSnapshotUpdate) {
+        if (!participationRequested || !serverSessionAccepted) return
+        msg.time_sync?.let(::applyTimeSync)
+        if (!isPlaybackEnabledForCurrentServer()) {
+            enterStandbyParticipation(waitForLock = false)
             return
         }
-        val track = trackProto.toApi().withLyrics(msg.lyric_lrc, msg.secondary_lyric_lrc)
-
-        if (playback.url.isBlank()) {
-            logger.error("SyncState for '{}' is missing a playable URL; refusing to start audio.", track.title)
-            stopActivePlayback()
+        playbackRegistrationActive = true
+        ClientNetworkSetup.startSyncLoop()
+        val snapshot = msg.snapshot
+        if (snapshot == null) {
+            releasePlaybackLock(clearMessage = true)
+            stopActivePlayback(fireEvent = true)
             return
         }
-        if (!applyClientMediaPolicy(track, playback.url)) {
-            stopActivePlayback()
-            return
-        }
-        val locallyAllowedTrack = applyLocalContentFilter(track) ?: run {
-            stopActivePlayback()
-            return
-        }
-        currentLyrics = parseLyrics(locallyAllowedTrack.lyricLrc)
-        currentSecondaryLyrics = parseLyrics(locallyAllowedTrack.secondaryLyricLrc)
-        when (msg.state) {
-            PlaybackStateProto.PLAYING -> {
-                if (!ensurePlaybackLock()) return
-                val serverNow = currentServerMonotonicNow()
-                val seekMs = computeSeekMs(msg.server_start_monotonic, serverNow)
-                logger.debug("SyncState PLAYING: '{}' seekMs={}", locallyAllowedTrack.title, seekMs)
-                ClientAudioPlayer.play(playback, seekMs)
-                VanillaSoundBlocker.stopBlockedSoundsIfNeeded()
-                currentContext = TrackContext(
-                    track = locallyAllowedTrack,
-                    playback = playback,
-                    state = PlaybackState.Playing(seekMs),
-                    serverStartMonotonic = msg.server_start_monotonic,
-                    serverResumeMonotonic = serverNow,
-                )
-                CoreEvents.bus.fire(
-                    OnClientPlaybackStarted(
-                        track = locallyAllowedTrack,
-                        playback = playback,
-                        positionMs = seekMs,
-                        fromSyncState = true,
-                    )
-                )
-            }
-            PlaybackStateProto.PAUSED -> {
-                if (!ensurePlaybackLock()) return
-                val posMs = msg.pause_position_ms
-                logger.debug("SyncState PAUSED: '{}' posMs={}", locallyAllowedTrack.title, posMs)
-                ClientAudioPlayer.play(playback, posMs)
-                ClientAudioPlayer.pause()
-                currentContext = TrackContext(
-                    track = locallyAllowedTrack,
-                    playback = playback,
-                    state = PlaybackState.Paused(posMs),
-                    serverStartMonotonic = msg.server_start_monotonic,
-                    serverResumeMonotonic = msg.server_start_monotonic,
-                )
-                CoreEvents.bus.fire(
-                    OnClientPlaybackStarted(
-                        track = locallyAllowedTrack,
-                        playback = playback,
-                        positionMs = posMs,
-                        fromSyncState = true,
-                    )
-                )
-            }
-            else -> {
-                releasePlaybackLock(clearMessage = true)
-                stopActivePlayback(fireEvent = true)
-            }
-        }
-        guiListener?.onPlaybackStateChanged()
+        applyPlaybackSnapshot(snapshot, fromSyncState = true)
     }
 
     /**
@@ -463,31 +363,35 @@ object ClientPlaybackHandler {
 
         when (msg.state) {
             PlaybackStateProto.PAUSED -> {
-                logger.debug("StateUpdate: PAUSED posMs={}", msg.position_ms)
+                val positionMs = normalizeClientPosition(msg.position_ms, ctx.track.durationMs)
+                logger.debug("StateUpdate: PAUSED posMs={}", positionMs)
                 ClientAudioPlayer.pause()
-                currentContext = ctx.copy(state = PlaybackState.Paused(msg.position_ms))
+                currentContext = ctx.copy(state = PlaybackState.Paused(positionMs))
                 CoreEvents.bus.fire(
                     OnClientPlaybackPaused(
                         track = ctx.track,
-                        positionMs = msg.position_ms,
+                        positionMs = positionMs,
                     )
                 )
             }
             PlaybackStateProto.PLAYING -> {
-                // Resume or seek: server_start_monotonic tells us the new reference point
                 if (!ensurePlaybackLock()) return
                 val serverNow = currentServerMonotonicNow()
                 val wasPaused = ctx.state is PlaybackState.Paused
                 val playback = msg.playback?.toApi() ?: ctx.playback
-                val seekMs = if (msg.server_start_monotonic != 0L)
-                    computeSeekMs(msg.server_start_monotonic, serverNow)
-                else
-                    msg.position_ms
+                val seekMs = anchoredPlaybackPositionMs(
+                    positionMs = msg.position_ms,
+                    anchorServerMonotonic = msg.position_anchor_server_monotonic,
+                    durationMs = ctx.track.durationMs,
+                )
                 logger.debug("StateUpdate: PLAYING seekMs={}", seekMs)
                 ClientAudioPlayer.play(playback, seekMs)
                 VanillaSoundBlocker.stopBlockedSoundsIfNeeded()
-                val newStart = if (msg.server_start_monotonic != 0L) msg.server_start_monotonic
-                               else ctx.serverStartMonotonic
+                val newStart = if (msg.position_anchor_server_monotonic != 0L) {
+                    msg.position_anchor_server_monotonic - msg.position_ms.coerceAtLeast(0L) * 1_000_000L
+                } else {
+                    ctx.serverStartMonotonic
+                }
                 currentContext = ctx.copy(
                     playback = playback,
                     state = PlaybackState.Playing(seekMs),
@@ -525,13 +429,38 @@ object ClientPlaybackHandler {
      */
     fun handleSyncResponse(resp: SyncResponse) {
         if (!canHandlePlaybackPackets()) return
-        serverClockOffset = timeSyncHandler.computeClientOffset(resp)
+        applyTimeSync(resp)
         logger.debug("Clock offset updated: {} ns", serverClockOffset)
     }
 
-    fun handleServerHandshake(msg: ServerHandshake) {
-        if (!canHandleDirectResponses()) return
+    fun handleServerWelcome(msg: ServerWelcome) {
+        if (!participationRequested) return
+        msg.initial_time_sync?.let(::applyTimeSync)
         serverHandshakeReceived = true
+        serverSessionAccepted = msg.accepted
+        if (!msg.accepted) {
+            val failure = msg.failure.ifBlank {
+                "MoeMusic server rejected the client handshake (server protocol ${msg.server_protocol_version})."
+            }
+            logger.warn("ServerWelcome rejected: {}", failure)
+            sourceCatalog = null
+            playbackRegistrationActive = false
+            ClientNetworkSetup.stopSyncLoop()
+            releasePlaybackLock(clearMessage = true)
+            stopActivePlayback()
+            failPendingRequests(ClientRequestException(failure))
+            val minecraft = Minecraft.getInstance()
+            minecraft.execute {
+                showPersistentRuntimeWarning(
+                    minecraft,
+                    McText.translatable("screen.moemusic.playback.toast.title"),
+                    McText.literal(failure),
+                )
+            }
+            guiListener?.onSearchSourcesChanged()
+            return
+        }
+
         sourceCatalog = SearchSourceCatalog(
             sources = msg.sources.map { info ->
                 SearchSourceInfo(
@@ -542,11 +471,30 @@ object ClientPlaybackHandler {
             },
             defaultSourceId = msg.default_source_id,
         )
+        playbackRegistrationActive = msg.accepted_state == ClientStateProto.CLIENT_STATE_ACTIVE
         logger.debug(
-            "ServerHandshake: {} sources default='{}'",
+            "ServerWelcome: {} sources default='{}' state={} initialPlayback={}",
             sourceCatalog?.sources?.size ?: 0,
             sourceCatalog?.defaultSourceId.orEmpty(),
+            msg.accepted_state,
+            msg.initial_playback != null,
         )
+        if (playbackRegistrationActive) {
+            if (isPlaybackEnabledForCurrentServer()) {
+                ClientNetworkSetup.startSyncLoop()
+                val snapshot = msg.initial_playback
+                if (snapshot != null) {
+                    applyPlaybackSnapshot(snapshot, fromSyncState = true)
+                } else {
+                    releasePlaybackLock(clearMessage = true)
+                    stopActivePlayback()
+                }
+            } else {
+                enterStandbyParticipation(waitForLock = false)
+            }
+        } else {
+            ClientNetworkSetup.stopSyncLoop()
+        }
         if (standbyWaitingForLock) {
             updateInstanceLockStandby(notifyUser = true)
             startStandbyPolling()
@@ -693,14 +641,18 @@ object ClientPlaybackHandler {
     /** Send the initial client hello for this connection. */
     fun sendHandshake(locale: String, modVersion: String, protocolVersion: Int, initialState: ClientStateProto) {
         participationRequested = true
-        playbackRegistrationActive = initialState == ClientStateProto.CLIENT_STATE_ACTIVE
-        handshakeRequestedAtNanos = System.nanoTime()
+        playbackRegistrationActive = false
+        val now = System.nanoTime()
+        handshakeRequestedAtNanos = now
         serverHandshakeReceived = false
+        serverSessionAccepted = false
+        sourceCatalog = null
         val msg = ClientHandshake(
             locale = locale,
             mod_version = modVersion,
             protocol_version = protocolVersion,
             initial_state = initialState,
+            client_send_monotonic = now,
         )
         val id = ResourceLocation(PacketIds.CLIENT_HANDSHAKE.namespace, PacketIds.CLIENT_HANDSHAKE.path)
         PacketSender.c2s().send(id, FriendlyByteBuf(Unpooled.wrappedBuffer(msg.encode())))
@@ -714,9 +666,18 @@ object ClientPlaybackHandler {
     }
 
     fun sendClientStateChange(state: ClientStateProto) {
-        if (!participationRequested) return
-        playbackRegistrationActive = state == ClientStateProto.CLIENT_STATE_ACTIVE
-        send(PacketIds.CLIENT_STATE_CHANGE, ClientStateChange(state = state).encode())
+        if (!participationRequested || !serverSessionAccepted) return
+        if (state == ClientStateProto.CLIENT_STATE_STANDBY) {
+            playbackRegistrationActive = false
+            ClientNetworkSetup.stopSyncLoop()
+        }
+        send(
+            PacketIds.CLIENT_STATE_CHANGE,
+            ClientStateChange(
+                state = state,
+                client_send_monotonic = System.nanoTime(),
+            ).encode(),
+        )
     }
 
     /** Send a [SearchRequest] to the server. Used by the search GUI. */
@@ -837,6 +798,17 @@ object ClientPlaybackHandler {
         cachedSearchState = state
     }
 
+    private fun failPendingRequests(cause: Throwable) {
+        pendingSearchResponses.failAll(cause)
+        pendingQueueResponses.failAll(cause)
+        pendingTrackSubmitResponses.failAll(cause)
+        pendingIdentifierSubmitResponses.failAll(cause)
+        pendingSelectionSubmitResponses.failAll(cause)
+        pendingQueueRemoveResponses.failAll(cause)
+        pendingPlaybackControlResponses.failAll(cause)
+        pendingContentFilterActionResponses.failAll(cause)
+    }
+
     private fun SelectionEntry.toDirectTrackSubmitTrack(): TrackInfo? {
         val trackId = directTrackId?.takeIf(String::isNotBlank) ?: return null
         return TrackInfo(
@@ -914,14 +886,7 @@ object ClientPlaybackHandler {
     /** Clear connection-scoped local state on disconnect so stale packets do not restart playback. */
     fun clearContext() {
         val disconnect = ClientRequestException("Disconnected from MoeMusic session.")
-        pendingSearchResponses.failAll(disconnect)
-        pendingQueueResponses.failAll(disconnect)
-        pendingTrackSubmitResponses.failAll(disconnect)
-        pendingIdentifierSubmitResponses.failAll(disconnect)
-        pendingSelectionSubmitResponses.failAll(disconnect)
-        pendingQueueRemoveResponses.failAll(disconnect)
-        pendingPlaybackControlResponses.failAll(disconnect)
-        pendingContentFilterActionResponses.failAll(disconnect)
+        failPendingRequests(disconnect)
         participationRequested = false
         playbackRegistrationActive = false
         standbyWaitingForLock = false
@@ -932,6 +897,8 @@ object ClientPlaybackHandler {
         latestQueueRemoveResponseRequestId = 0L
         latestPlaybackControlResponseRequestId = 0L
         latestContentFilterActionResponseRequestId = 0L
+        serverClockOffset = 0L
+        timeSyncEstablished = false
         stopStandbyPolling()
         currentContext = null
         currentLyrics = null
@@ -947,6 +914,7 @@ object ClientPlaybackHandler {
         sourceCatalog = null
         handshakeRequestedAtNanos = 0L
         serverHandshakeReceived = false
+        serverSessionAccepted = false
         // Search cache is intentionally kept — the GUI may restore recent results across reconnects.
     }
 
@@ -954,14 +922,117 @@ object ClientPlaybackHandler {
     // Helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Compute the client-side seek position given a `serverStartMonotonic` value.
-     *
-     * `seekMs = (currentServerNanoTime - serverStartMonotonic) / 1_000_000`
-     * Clamped to ≥ 0 (the 2-second server buffer means this may briefly be negative).
-     */
-    fun computeSeekMs(serverStartMonotonic: Long, serverNow: Long = currentServerMonotonicNow()): Long {
-        return ((serverNow - serverStartMonotonic) / 1_000_000L).coerceAtLeast(0L)
+    private fun applyPlaybackSnapshot(snapshot: PlaybackSnapshot, fromSyncState: Boolean) {
+        if (!canHandlePlaybackPackets()) return
+        val trackProto = snapshot.track ?: return
+        val playback = snapshot.playback?.toApi() ?: run {
+            logger.error("Playback snapshot for '{}' is missing playback details; refusing to start audio.", trackProto.title)
+            return
+        }
+        val track = trackProto.toApi().withLyrics(snapshot.lyric_lrc, snapshot.secondary_lyric_lrc)
+
+        if (playback.url.isBlank()) {
+            logger.error("Playback snapshot for '{}' is missing a playable URL; refusing to start audio.", track.title)
+            stopActivePlayback()
+            return
+        }
+        if (!applyClientMediaPolicy(track, playback.url)) {
+            stopActivePlayback()
+            return
+        }
+        val locallyAllowedTrack = applyLocalContentFilter(track) ?: run {
+            stopActivePlayback()
+            return
+        }
+        currentLyrics = parseLyrics(locallyAllowedTrack.lyricLrc)
+        currentSecondaryLyrics = parseLyrics(locallyAllowedTrack.secondaryLyricLrc)
+
+        when (snapshot.state) {
+            PlaybackStateProto.PLAYING -> {
+                if (!ensurePlaybackLock()) return
+                val serverNow = currentServerMonotonicNow()
+                val seekMs = anchoredPlaybackPositionMs(
+                    positionMs = snapshot.position_ms,
+                    anchorServerMonotonic = snapshot.position_anchor_server_monotonic,
+                    durationMs = locallyAllowedTrack.durationMs,
+                )
+                logger.debug("PlaybackSnapshot PLAYING: '{}' seekMs={}", locallyAllowedTrack.title, seekMs)
+                ClientAudioPlayer.play(playback, seekMs)
+                VanillaSoundBlocker.stopBlockedSoundsIfNeeded()
+                currentContext = TrackContext(
+                    track = locallyAllowedTrack,
+                    playback = playback,
+                    state = PlaybackState.Playing(seekMs),
+                    serverStartMonotonic = if (snapshot.position_anchor_server_monotonic != 0L) {
+                        snapshot.position_anchor_server_monotonic - snapshot.position_ms.coerceAtLeast(0L) * 1_000_000L
+                    } else {
+                        serverNow - seekMs * 1_000_000L
+                    },
+                    serverResumeMonotonic = serverNow,
+                )
+                CoreEvents.bus.fire(
+                    OnClientPlaybackStarted(
+                        track = locallyAllowedTrack,
+                        playback = playback,
+                        positionMs = seekMs,
+                        fromSyncState = fromSyncState,
+                    )
+                )
+            }
+
+            PlaybackStateProto.PAUSED -> {
+                if (!ensurePlaybackLock()) return
+                val posMs = normalizeClientPosition(snapshot.position_ms, locallyAllowedTrack.durationMs)
+                val serverNow = currentServerMonotonicNow()
+                logger.debug("PlaybackSnapshot PAUSED: '{}' posMs={}", locallyAllowedTrack.title, posMs)
+                ClientAudioPlayer.play(playback, posMs)
+                ClientAudioPlayer.pause()
+                currentContext = TrackContext(
+                    track = locallyAllowedTrack,
+                    playback = playback,
+                    state = PlaybackState.Paused(posMs),
+                    serverStartMonotonic = serverNow - posMs * 1_000_000L,
+                    serverResumeMonotonic = serverNow,
+                )
+                CoreEvents.bus.fire(
+                    OnClientPlaybackStarted(
+                        track = locallyAllowedTrack,
+                        playback = playback,
+                        positionMs = posMs,
+                        fromSyncState = fromSyncState,
+                    )
+                )
+            }
+
+            PlaybackStateProto.STOPPED -> {
+                releasePlaybackLock(clearMessage = true)
+                stopActivePlayback(fireEvent = true)
+            }
+        }
+        guiListener?.onPlaybackStateChanged()
+    }
+
+    private fun applyTimeSync(resp: SyncResponse) {
+        serverClockOffset = timeSyncHandler.computeClientOffset(resp)
+        timeSyncEstablished = true
+    }
+
+    private fun anchoredPlaybackPositionMs(
+        positionMs: Long,
+        anchorServerMonotonic: Long,
+        durationMs: Long,
+    ): Long {
+        val basePositionMs = positionMs.coerceAtLeast(0L)
+        if (!timeSyncEstablished || anchorServerMonotonic == 0L) {
+            return normalizeClientPosition(basePositionMs, durationMs)
+        }
+        val elapsedMs = (currentServerMonotonicNow() - anchorServerMonotonic) / 1_000_000L
+        return normalizeClientPosition(basePositionMs + elapsedMs, durationMs)
+    }
+
+    private fun normalizeClientPosition(positionMs: Long, durationMs: Long): Long {
+        val nonNegative = positionMs.coerceAtLeast(0L)
+        return if (durationMs > 0L) nonNegative.coerceAtMost(durationMs) else nonNegative
     }
 
     private fun currentServerMonotonicNow(): Long = System.nanoTime() + serverClockOffset
@@ -990,14 +1061,14 @@ object ClientPlaybackHandler {
 
     /** Playback broadcasts only apply while this client is actively registered. */
     private fun canHandlePlaybackPackets(): Boolean =
-        playbackRegistrationActive && isPlaybackEnabledForCurrentServer()
+        serverSessionAccepted && playbackRegistrationActive && isPlaybackEnabledForCurrentServer()
 
     /** Direct request/response packets stay available during local standby. */
     private fun canHandleDirectResponses(): Boolean =
-        participationRequested
+        participationRequested && serverSessionAccepted
 
     private fun canSendRequests(): Boolean =
-        participationRequested
+        participationRequested && serverSessionAccepted
 
     private fun startSession(minecraft: Minecraft = Minecraft.getInstance()) {
         stopStandbyPolling()
@@ -1008,13 +1079,9 @@ object ClientPlaybackHandler {
         }
         val locale = minecraft.languageManager.selected.code
         sendHandshake(locale, clientModVersion, clientProtocolVersion, desired.state)
-        if (desired.state == ClientStateProto.CLIENT_STATE_ACTIVE) {
-            ClientNetworkSetup.startSyncLoop()
-        } else {
-            ClientNetworkSetup.stopSyncLoop()
-            if (desired.waitForLock) {
-                updateInstanceLockStandby(notifyUser = false)
-            }
+        ClientNetworkSetup.stopSyncLoop()
+        if (desired.waitForLock) {
+            updateInstanceLockStandby(notifyUser = false)
         }
     }
 
@@ -1055,8 +1122,8 @@ object ClientPlaybackHandler {
             ClientNetworkSetup.startSyncLoop()
             return
         }
+        if (!serverSessionAccepted) return
         sendClientStateChange(ClientStateProto.CLIENT_STATE_ACTIVE)
-        ClientNetworkSetup.startSyncLoop()
     }
 
     private fun enterStandbyParticipation(waitForLock: Boolean) {
@@ -1265,6 +1332,9 @@ object ClientPlaybackHandler {
         }
         if (!serverHandshakeReceived) {
             throw ClientRequestException("MoeMusic server handshake has not completed yet.")
+        }
+        if (!serverSessionAccepted) {
+            throw ClientRequestException("MoeMusic server rejected this client session.")
         }
     }
 
