@@ -18,8 +18,7 @@ class BadPacketsNetworkChannelTest {
 
     @Test
     fun `playback and broadcast packets still require handshake registration`() {
-        assertFalse(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.PLAYBACK_SNAPSHOT_UPDATE))
-        assertFalse(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.PLAY_TRACK))
+        assertFalse(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.PLAYBACK_SNAPSHOT_PUSH))
         assertFalse(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.STATE_UPDATE))
     }
 }

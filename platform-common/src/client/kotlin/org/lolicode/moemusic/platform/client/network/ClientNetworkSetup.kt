@@ -13,7 +13,7 @@ import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.proto.ContentFilterActionResponse
 import org.lolicode.moemusic.core.protocol.proto.IdentifierSubmitResponse
-import org.lolicode.moemusic.core.protocol.proto.PlayTrack
+import org.lolicode.moemusic.core.protocol.proto.PlaybackSnapshotPush
 import org.lolicode.moemusic.core.protocol.proto.PlaybackControlResponse
 import org.lolicode.moemusic.core.protocol.proto.QueueRemoveResponse
 import org.lolicode.moemusic.core.protocol.proto.QueueResponse
@@ -23,7 +23,6 @@ import org.lolicode.moemusic.core.protocol.proto.ServerWelcome
 import org.lolicode.moemusic.core.protocol.proto.StateUpdate
 import org.lolicode.moemusic.core.protocol.proto.SyncRequest
 import org.lolicode.moemusic.core.protocol.proto.SyncResponse
-import org.lolicode.moemusic.core.protocol.proto.PlaybackSnapshotUpdate
 import org.lolicode.moemusic.core.protocol.proto.TrackSubmitResponse
 import org.lolicode.moemusic.platform.client.playback.ClientPlaybackHandler
 import org.slf4j.LoggerFactory
@@ -56,14 +55,9 @@ object ClientNetworkSetup {
      */
     fun register() {
         // Register S→C receivers
-        registerReceiver(PacketIds.PLAY_TRACK) { buf ->
+        registerReceiver(PacketIds.PLAYBACK_SNAPSHOT_PUSH) { buf ->
             val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handlePlayTrack(PlayTrack.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.PLAYBACK_SNAPSHOT_UPDATE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handlePlaybackSnapshotUpdate(PlaybackSnapshotUpdate.ADAPTER.decode(bytes))
+            ClientPlaybackHandler.handlePlaybackSnapshotPush(PlaybackSnapshotPush.ADAPTER.decode(bytes))
         }
 
         registerReceiver(PacketIds.STATE_UPDATE) { buf ->
