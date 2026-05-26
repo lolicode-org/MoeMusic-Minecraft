@@ -42,7 +42,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * Client-side packet handler for all music playback control packets.
  *
- * Receives [PlayTrack], [PlaybackSnapshotUpdate], [StateUpdate], and [SyncResponse] from the server,
+ * Receives [PlaybackSnapshotPush], [StateUpdate], and [SyncResponse] from the server,
  * then drives [ClientAudioPlayer].
  *
  * Maintains [serverClockOffset] (nanoseconds to add to [System.nanoTime] to estimate the
@@ -328,31 +328,11 @@ object ClientPlaybackHandler {
     // -------------------------------------------------------------------------
 
     /**
-     * Handle a [PlayTrack] packet: apply the server's anchored playback snapshot.
+     * Handle a [PlaybackSnapshotPush] packet: apply the server's anchored playback snapshot.
      */
-    fun handlePlayTrack(msg: PlayTrack) {
-        applyPlaybackSnapshot(msg.snapshot ?: return, fromSyncState = false)
-    }
-
-    /**
-     * Handle a full snapshot update for a newly active client.
-     */
-    fun handlePlaybackSnapshotUpdate(msg: PlaybackSnapshotUpdate) {
-        if (!participationRequested || !serverSessionAccepted) return
-        msg.time_sync?.let(::applyTimeSync)
-        if (!isPlaybackEnabledForCurrentServer()) {
-            enterStandbyParticipation(waitForLock = false)
-            return
-        }
-        playbackRegistrationActive = true
-        ClientNetworkSetup.startSyncLoop()
-        val snapshot = msg.snapshot
-        if (snapshot == null) {
-            releasePlaybackLock(clearMessage = true)
-            stopActivePlayback(fireEvent = true)
-            return
-        }
-        applyPlaybackSnapshot(snapshot, fromSyncState = true)
+    fun handlePlaybackSnapshotPush(msg: PlaybackSnapshotPush) {
+        val fromSyncState = msg.reason != PlaybackSnapshotPushReason.PLAYBACK_SNAPSHOT_PUSH_REASON_NEW_TRACK
+        applyPlaybackSnapshot(msg.snapshot ?: return, fromSyncState = fromSyncState)
     }
 
     /**
@@ -433,7 +413,7 @@ object ClientPlaybackHandler {
      * Called immediately when the response arrives to minimise timing error.
      */
     fun handleSyncResponse(resp: SyncResponse) {
-        if (!canHandlePlaybackPackets()) return
+        if (!canHandleSessionPackets()) return
         applyTimeSync(resp)
         logger.debug("Clock offset updated: {} ns", serverClockOffset)
     }
@@ -485,27 +465,17 @@ object ClientPlaybackHandler {
         )
         playbackRegistrationActive = msg.accepted_state == ClientStateProto.CLIENT_STATE_ACTIVE
         logger.debug(
-            "ServerWelcome: {} sources default='{}' state={} initialPlayback={}",
+            "ServerWelcome: {} sources default='{}' state={} active={}",
             sourceCatalog?.sources?.size ?: 0,
             sourceCatalog?.defaultSourceId.orEmpty(),
             msg.accepted_state,
-            msg.initial_playback != null,
+            playbackRegistrationActive,
         )
+        ClientNetworkSetup.startSyncLoop()
         if (playbackRegistrationActive) {
-            if (isPlaybackEnabledForCurrentServer()) {
-                ClientNetworkSetup.startSyncLoop()
-                val snapshot = msg.initial_playback
-                if (snapshot != null) {
-                    applyPlaybackSnapshot(snapshot, fromSyncState = true)
-                } else {
-                    releasePlaybackLock(clearMessage = true)
-                    stopActivePlayback()
-                }
-            } else {
+            if (!isPlaybackEnabledForCurrentServer()) {
                 enterStandbyParticipation(waitForLock = false)
             }
-        } else {
-            ClientNetworkSetup.stopSyncLoop()
         }
         if (standbyWaitingForLock) {
             updateInstanceLockStandby(notifyUser = true)
@@ -644,7 +614,7 @@ object ClientPlaybackHandler {
      * Safe to call from any thread.
      */
     fun sendSyncRequest() {
-        if (!canHandlePlaybackPackets()) return
+        if (!canHandleSessionPackets()) return
         val req = SyncRequest(client_send_monotonic = System.nanoTime())
         val id = ResourceLocation.fromNamespaceAndPath(PacketIds.SYNC_REQUEST.namespace, PacketIds.SYNC_REQUEST.path)
         PacketSender.c2s().send(id, FriendlyByteBuf(Unpooled.wrappedBuffer(req.encode())))
@@ -680,15 +650,11 @@ object ClientPlaybackHandler {
 
     fun sendClientStateChange(state: ClientStateProto) {
         if (!participationRequested || !serverSessionAccepted) return
-        if (state == ClientStateProto.CLIENT_STATE_STANDBY) {
-            playbackRegistrationActive = false
-            ClientNetworkSetup.stopSyncLoop()
-        }
+        playbackRegistrationActive = state == ClientStateProto.CLIENT_STATE_ACTIVE
         send(
             PacketIds.CLIENT_STATE_CHANGE,
             ClientStateChange(
                 state = state,
-                client_send_monotonic = System.nanoTime(),
             ).encode(),
         )
     }
@@ -1075,14 +1041,18 @@ object ClientPlaybackHandler {
 
     /** Playback broadcasts only apply while this client is actively registered. */
     private fun canHandlePlaybackPackets(): Boolean =
-        serverSessionAccepted && playbackRegistrationActive && isPlaybackEnabledForCurrentServer()
+        canHandleSessionPackets() && playbackRegistrationActive && isPlaybackEnabledForCurrentServer()
+
+    /** Session packets stay available for both active and standby clients after welcome acceptance. */
+    private fun canHandleSessionPackets(): Boolean =
+        participationRequested && serverSessionAccepted
 
     /** Direct request/response packets stay available during local standby. */
     private fun canHandleDirectResponses(): Boolean =
-        participationRequested && serverSessionAccepted
+        canHandleSessionPackets()
 
     private fun canSendRequests(): Boolean =
-        participationRequested && serverSessionAccepted
+        canHandleSessionPackets()
 
     private fun startSession(minecraft: Minecraft = Minecraft.getInstance()) {
         stopStandbyPolling()
@@ -1092,8 +1062,8 @@ object ClientPlaybackHandler {
             clearInstanceLockStandby()
         }
         val locale = minecraft.languageManager.selected
-        sendHandshake(locale, clientModVersion, clientProtocolVersion, desired.state)
         ClientNetworkSetup.stopSyncLoop()
+        sendHandshake(locale, clientModVersion, clientProtocolVersion, desired.state)
         if (desired.waitForLock) {
             updateInstanceLockStandby(notifyUser = false)
         }
@@ -1133,7 +1103,6 @@ object ClientPlaybackHandler {
         standbyWaitingForLock = false
         clearInstanceLockStandby()
         if (playbackRegistrationActive) {
-            ClientNetworkSetup.startSyncLoop()
             return
         }
         if (!serverSessionAccepted) return
@@ -1143,7 +1112,6 @@ object ClientPlaybackHandler {
     private fun enterStandbyParticipation(waitForLock: Boolean) {
         val hadActiveRegistration = playbackRegistrationActive
         playbackRegistrationActive = false
-        ClientNetworkSetup.stopSyncLoop()
         releasePlaybackLock(clearMessage = !waitForLock)
         stopActivePlayback()
         if (hadActiveRegistration) {
@@ -1236,7 +1204,6 @@ object ClientPlaybackHandler {
         if (!participationRequested) return
 
         standbyWaitingForLock = true
-        ClientNetworkSetup.stopSyncLoop()
         val hadActiveRegistration = playbackRegistrationActive
         playbackRegistrationActive = false
         if (hadActiveRegistration) {
