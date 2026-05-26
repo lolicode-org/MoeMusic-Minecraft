@@ -1,98 +1,34 @@
 package org.lolicode.moemusic.platform.client.playback
 
-import org.lolicode.moemusic.platform.text.McText
-
-import io.netty.buffer.Unpooled
-import kotlinx.coroutines.*
-import lol.bai.badpackets.api.PacketSender
+import kotlinx.coroutines.Deferred
 import net.minecraft.client.Minecraft
-import net.minecraft.network.FriendlyByteBuf
-import net.minecraft.network.chat.Component
-import net.minecraft.resources.ResourceLocation
 import org.lolicode.moemusic.api.LocalizedText
-import org.lolicode.moemusic.api.client.ClientRequestException
-import org.lolicode.moemusic.api.debugString
-import org.lolicode.moemusic.api.event.*
+import org.lolicode.moemusic.api.event.UserParticipationState
 import org.lolicode.moemusic.api.model.*
-import org.lolicode.moemusic.clientcore.media.ClientMediaFirewall
 import org.lolicode.moemusic.clientcore.playback.*
-import org.lolicode.moemusic.clientcore.playback.SearchSourceInfo
+import org.lolicode.moemusic.core.config.ClientConfig
 import org.lolicode.moemusic.core.config.ModConfigManager
-import org.lolicode.moemusic.core.event.CoreEvents
-import org.lolicode.moemusic.core.contentfilter.ContentFilterRuntime
+import org.lolicode.moemusic.core.playback.LyricLine
+import org.lolicode.moemusic.core.playback.ParsedLyrics
 import org.lolicode.moemusic.core.protocol.MoeMusicProtocol
 import org.lolicode.moemusic.core.protocol.PacketId
-import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.proto.*
-import org.lolicode.moemusic.core.playback.*
-import org.lolicode.moemusic.core.media.MediaUrlPolicyResult
 import org.lolicode.moemusic.platform.client.audio.ClientAudioPlayer
 import org.lolicode.moemusic.platform.client.audio.VanillaSoundBlocker
 import org.lolicode.moemusic.platform.client.i18n.ClientLocalization
-import org.lolicode.moemusic.platform.client.network.ClientNetworkSetup
 import org.lolicode.moemusic.platform.client.ui.ClientToastIds
-import org.lolicode.moemusic.platform.client.ui.NowPlayingHud
 import org.lolicode.moemusic.platform.client.ui.showPersistentRuntimeWarning
 import org.lolicode.moemusic.platform.client.ui.showWrappedSystemToast
-import org.slf4j.LoggerFactory
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
-import kotlin.time.Duration.Companion.milliseconds
+import org.lolicode.moemusic.platform.network.NetworkSetup
+import org.lolicode.moemusic.platform.text.McText
 
 /**
- * Client-side packet handler for all music playback control packets.
+ * Minecraft-facing facade for the shared client playback runtime.
  *
- * Receives [PlaybackSnapshotPush], [StateUpdate], and [SyncResponse] from the server,
- * then drives [ClientAudioPlayer].
- *
- * Maintains [serverClockOffset] (nanoseconds to add to [System.nanoTime] to estimate the
- * server's monotonic clock), updated each time a [SyncResponse] arrives.
- *
- * Singleton — accessed from [ClientNetworkSetup] and [NowPlayingHud].
+ * Protocol/session logic lives in `:client-core`; this object keeps the existing platform-common
+ * call surface for screens, keybinds, and packet registration while supplying Minecraft adapters.
  */
 object ClientPlaybackHandler {
-
-    private data class DesiredParticipation(
-        val state: ClientStateProto,
-        val waitForLock: Boolean,
-    )
-
-    private class PendingRequestRegistry<T> {
-        private val pending = ConcurrentHashMap<Long, CompletableDeferred<T>>()
-
-        fun register(requestId: Long): CompletableDeferred<T> =
-            CompletableDeferred<T>().also { deferred ->
-                pending[requestId] = deferred
-                deferred.invokeOnCompletion {
-                    pending.remove(requestId, deferred)
-                }
-            }
-
-        fun complete(requestId: Long, response: T) {
-            pending.remove(requestId)?.complete(response)
-        }
-
-        fun failAll(cause: Throwable) {
-            val entries = pending.values.toList()
-            pending.clear()
-            entries.forEach { it.completeExceptionally(cause) }
-        }
-    }
-
-    private val logger = LoggerFactory.getLogger(ClientPlaybackHandler::class.java)
-    private val standbyScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val timeSyncHandler = TimeSyncHandler()
-    private val requestIdCounter = AtomicLong(1L)
-    private val pendingSearchResponses = PendingRequestRegistry<SearchResponse>()
-    private val pendingQueueResponses = PendingRequestRegistry<QueueResponse>()
-    private val pendingTrackSubmitResponses = PendingRequestRegistry<TrackSubmitResponse>()
-    private val pendingIdentifierSubmitResponses = PendingRequestRegistry<IdentifierSubmitResponse>()
-    private val pendingSelectionSubmitResponses = PendingRequestRegistry<SelectionSubmitResponse>()
-    private val pendingQueueRemoveResponses = PendingRequestRegistry<QueueRemoveResponse>()
-    private val pendingPlaybackControlResponses = PendingRequestRegistry<PlaybackControlResponse>()
-    private val pendingContentFilterActionResponses = PendingRequestRegistry<ContentFilterActionResponse>()
-    private const val HANDSHAKE_GRACE_NANOS = 3_000_000_000L
-    private const val STANDBY_LOCK_POLL_INTERVAL_MS = 3_000L
 
     @Volatile
     private var clientModVersion: String = "unknown"
@@ -100,134 +36,14 @@ object ClientPlaybackHandler {
     @Volatile
     private var clientProtocolVersion: Int = MoeMusicProtocol.VERSION
 
-    @Volatile
-    private var participationRequested: Boolean = false
+    private val runtime = ClientPlaybackRuntime(
+        platform = MinecraftPlaybackPlatform(),
+        listener = MinecraftPlaybackListener(),
+    )
 
-    /** True while this client is actively registered for playback broadcasts in MinecraftUserRegistry. */
-    @Volatile
-    private var playbackRegistrationActive: Boolean = false
-
-    /** True while local standby is caused by the instance lock being unavailable. */
-    @Volatile
-    private var standbyWaitingForLock: Boolean = false
-
-    @Volatile
-    private var instanceLockWaitNotified: Boolean = false
-
-    @Volatile
-    private var latestSearchResponseRequestId: Long = 0L
-
-    @Volatile
-    private var latestQueueResponseRequestId: Long = 0L
-
-    @Volatile
-    private var latestTrackSubmitResponseRequestId: Long = 0L
-
-    @Volatile
-    private var latestQueueRemoveResponseRequestId: Long = 0L
-
-    @Volatile
-    private var latestPlaybackControlResponseRequestId: Long = 0L
-
-    @Volatile
-    private var latestContentFilterActionResponseRequestId: Long = 0L
-
-    private var standbyPollJob: Job? = null
-
-    /**
-     * Nanosecond offset: `System.nanoTime() + serverClockOffset ≈ server's System.nanoTime()`.
-     * Computed from the most recent [SyncResponse].
-     */
-    @Volatile
-    var serverClockOffset: Long = 0L
-        private set
-
-    @Volatile
-    private var timeSyncEstablished: Boolean = false
-
-    /** Current client-side view of the playback state. Updated by incoming packets. */
-    @Volatile
-    var currentContext: TrackContext? = null
-        private set
-
-    /** The most recent [SearchResponse] received from the server. Null until a search is performed. */
-    @Volatile
-    var lastSearchResponse: SearchResponse? = null
-        private set
-
-    /** Aggregated search state used by the GUI when it restores a previous search session. */
-    @Volatile
-    var cachedSearchState: CachedSearchState? = null
-        private set
-
-    /** Server-provided search source metadata from the join handshake. */
-    @Volatile
-    var sourceCatalog: SearchSourceCatalog? = null
-        private set
-
-    @Volatile
-    var handshakeRequestedAtNanos: Long = 0L
-        private set
-
-    @Volatile
-    private var serverHandshakeMissingLogged: Boolean = false
-
-    @Volatile
-    var serverHandshakeReceived: Boolean = false
-        private set
-
-    @Volatile
-    private var serverSessionAccepted: Boolean = false
-
-    @Volatile
-    var lastServerWelcomeRejection: ServerWelcomeRejection? = null
-        private set
-
-    /** The most recent [QueueResponse] received from the server. Null until a queue request is made. */
-    @Volatile
-    var lastQueueResponse: QueueResponse? = null
-        private set
-
-    @Volatile
-    var lastTrackSubmitResponse: TrackSubmitResponse? = null
-        private set
-
-    @Volatile
-    var lastQueueRemoveResponse: QueueRemoveResponse? = null
-        private set
-
-    @Volatile
-    var lastPlaybackControlResponse: PlaybackControlResponse? = null
-        private set
-
-    @Volatile
-    var lastContentFilterActionResponse: ContentFilterActionResponse? = null
-        private set
-
-    @Volatile
-    var lastLocalPlaybackBlockedMessage: String? = null
-        private set
-
-    @Volatile
-    var lastInstanceLockMessage: String? = null
-        private set
-
-    @Volatile
-    var currentLyrics: ParsedLyrics? = null
-        private set
-
-    @Volatile
-    var currentSecondaryLyrics: ParsedLyrics? = null
-        private set
-
-    /**
-     * Optional listener for GUI updates. Set by the music player screen to receive
-     * notifications when packets arrive, so it can refresh its display.
-     */
     @Volatile
     var guiListener: GuiListener? = null
 
-    /** Callback interface for GUI screens to receive update notifications. */
     interface GuiListener {
         fun onSearchSourcesChanged() {}
         fun onSearchResponse(response: SearchResponse) {}
@@ -242,6 +58,57 @@ object ClientPlaybackHandler {
         fun onInstancePlaybackStandby(message: String?) {}
         fun onPlaybackStateChanged() {}
     }
+
+    val serverClockOffset: Long
+        get() = runtime.serverClockOffset
+
+    val currentContext: TrackContext?
+        get() = runtime.currentContext
+
+    val lastSearchResponse: SearchResponse?
+        get() = runtime.lastSearchResponse
+
+    val cachedSearchState: CachedSearchState?
+        get() = runtime.cachedSearchState
+
+    val sourceCatalog: SearchSourceCatalog?
+        get() = runtime.sourceCatalog
+
+    val handshakeRequestedAtNanos: Long
+        get() = runtime.handshakeRequestedAtNanos
+
+    val serverHandshakeReceived: Boolean
+        get() = runtime.serverHandshakeReceived
+
+    val lastServerWelcomeRejection: ServerWelcomeRejection?
+        get() = runtime.lastServerWelcomeRejection
+
+    val lastQueueResponse: QueueResponse?
+        get() = runtime.lastQueueResponse
+
+    val lastTrackSubmitResponse: TrackSubmitResponse?
+        get() = runtime.lastTrackSubmitResponse
+
+    val lastQueueRemoveResponse: QueueRemoveResponse?
+        get() = runtime.lastQueueRemoveResponse
+
+    val lastPlaybackControlResponse: PlaybackControlResponse?
+        get() = runtime.lastPlaybackControlResponse
+
+    val lastContentFilterActionResponse: ContentFilterActionResponse?
+        get() = runtime.lastContentFilterActionResponse
+
+    val lastLocalPlaybackBlockedMessage: String?
+        get() = runtime.lastLocalPlaybackBlockedMessage
+
+    val lastInstanceLockMessage: String?
+        get() = runtime.lastInstanceLockMessage
+
+    val currentLyrics: ParsedLyrics?
+        get() = runtime.currentLyrics
+
+    val currentSecondaryLyrics: ParsedLyrics?
+        get() = runtime.currentSecondaryLyrics
 
     fun initializeClientMetadata(modVersion: String, protocolVersion: Int = MoeMusicProtocol.VERSION) {
         clientModVersion = modVersion.ifBlank { "unknown" }
@@ -269,643 +136,111 @@ object ClientPlaybackHandler {
         )
     }
 
-    fun isPlaybackEnabledForCurrentServer(mc: Minecraft = Minecraft.getInstance()): Boolean {
-        return ClientPlaybackAvailability.isPlaybackEnabledForServer(
+    fun isPlaybackEnabledForCurrentServer(mc: Minecraft = Minecraft.getInstance()): Boolean =
+        ClientPlaybackAvailability.isPlaybackEnabledForServer(
             clientConfig = ModConfigManager.config.client,
             serverScope = currentServerScope(mc),
         )
-    }
 
-    fun currentAvailabilityIssue(mc: Minecraft = Minecraft.getInstance()): AvailabilityIssue? {
-        return ClientPlaybackAvailability.availabilityIssue(
+    fun currentAvailabilityIssue(mc: Minecraft = Minecraft.getInstance()): AvailabilityIssue? =
+        ClientPlaybackAvailability.availabilityIssue(
             hasConnection = mc.connection != null,
             serverHandshakeMissing = isServerHandshakeMissing(),
             serverHandshakeRejected = lastServerWelcomeRejection != null,
         )
-    }
 
-    fun currentParticipationState(): UserParticipationState? = when {
-        !participationRequested -> null
-        playbackRegistrationActive -> UserParticipationState.ACTIVE
-        else -> UserParticipationState.STANDBY
-    }
+    fun currentParticipationState(): UserParticipationState? =
+        runtime.currentParticipationState()
 
-    fun onConnectionJoined() {
-        logger.info(
-            "Minecraft connection joined (scope={}); starting MoeMusic client session.",
-            currentServerScope()?.displayName ?: "unknown",
-        )
-        startSession()
-        CoreEvents.bus.fire(OnClientConnected)
-    }
+    fun onConnectionJoined() = runtime.onConnectionJoined()
 
-    fun onConnectionDisconnected() {
-        logger.info("Minecraft connection disconnected; clearing MoeMusic client session.")
-        CoreEvents.bus.fire(OnClientDisconnected)
-        stopStandbyPolling()
-        ClientNetworkSetup.stopSyncLoop()
-        InstancePlaybackLock.release()
-        ClientAudioPlayer.stop()
-        ClientAudioPlayer.clearSavedState()
-        clearContext()
-    }
+    fun onConnectionDisconnected() = runtime.onConnectionDisconnected()
 
-    fun syncParticipationWithCurrentConfig() {
-        val minecraft = Minecraft.getInstance()
-        if (minecraft.connection == null) return
-        if (!participationRequested) {
-            startSession(minecraft)
-            return
-        }
+    fun syncParticipationWithCurrentConfig() = runtime.syncParticipationWithCurrentConfig()
 
-        val desired = desiredParticipation(minecraft)
-        if (desired.state == ClientStateProto.CLIENT_STATE_ACTIVE &&
-            playbackRegistrationActive &&
-            isGlobalInstancePlaybackLockEnabled()
-        ) {
-            currentContext?.let { ctx ->
-                if (ctx.state != PlaybackState.Stopped && !ensurePlaybackLock()) return
-            }
-        }
+    fun receiveFromServer(packetId: PacketId, payload: ByteArray) = runtime.receiveFromServer(packetId, payload)
 
-        applyDesiredParticipation(desired)
-    }
+    fun handlePlaybackSnapshotPush(msg: PlaybackSnapshotPush) = runtime.handlePlaybackSnapshotPush(msg)
 
-    // -------------------------------------------------------------------------
-    // Packet handlers
-    // -------------------------------------------------------------------------
+    fun handleStateUpdate(msg: StateUpdate) = runtime.handleStateUpdate(msg)
 
-    /**
-     * Handle a [PlaybackSnapshotPush] packet: apply the server's anchored playback snapshot.
-     */
-    fun handlePlaybackSnapshotPush(msg: PlaybackSnapshotPush) {
-        val snapshot = msg.snapshot ?: run {
-            logger.warn("Ignoring PlaybackSnapshotPush without a snapshot (reason={}).", msg.reason)
-            return
-        }
-        logger.debug(
-            "PlaybackSnapshotPush received: reason={} state={} source={} id={} title='{}'",
-            msg.reason,
-            snapshot.state,
-            snapshot.track?.source_id.orEmpty(),
-            snapshot.track?.id.orEmpty(),
-            snapshot.track?.title.orEmpty(),
-        )
-        if (!canHandlePlaybackPackets()) {
-            logIgnoredPlaybackPacket("PlaybackSnapshotPush", "reason=${msg.reason} state=${snapshot.state}")
-            return
-        }
-        val fromSyncState = msg.reason != PlaybackSnapshotPushReason.PLAYBACK_SNAPSHOT_PUSH_REASON_NEW_TRACK
-        applyPlaybackSnapshot(snapshot, fromSyncState = fromSyncState)
-    }
+    fun handleSyncResponse(resp: SyncResponse) = runtime.handleSyncResponse(resp)
 
-    /**
-     * Handle a [StateUpdate] packet.
-     *
-     * - **PAUSED**: pause [ClientAudioPlayer]; update context.
-     * - **PLAYING** (resume/seek): recompute seek and restart audio.
-     * - **STOPPED**: stop audio and clear context.
-     */
-    fun handleStateUpdate(msg: StateUpdate) {
-        if (!canHandlePlaybackPackets()) {
-            logIgnoredPlaybackPacket("StateUpdate", "state=${msg.state}")
-            return
-        }
-        val ctx = currentContext ?: run {
-            logger.warn("Ignoring StateUpdate {} because no playback context is loaded.", msg.state)
-            return
-        }
+    fun handleServerWelcome(msg: ServerWelcome) = runtime.handleServerWelcome(msg)
 
-        when (msg.state) {
-            PlaybackStateProto.PAUSED -> {
-                val positionMs = normalizeClientPosition(msg.position_ms, ctx.track.durationMs)
-                logInvalidServerPosition("StateUpdate PAUSED", msg.position_ms, positionMs, ctx.track)
-                logger.info(
-                    "Client playback paused by server: source={} id={} title='{}' positionMs={}",
-                    ctx.track.sourceId.orEmpty(),
-                    ctx.track.id,
-                    ctx.track.title,
-                    positionMs,
-                )
-                ClientAudioPlayer.pause()
-                currentContext = ctx.copy(state = PlaybackState.Paused(positionMs))
-                CoreEvents.bus.fire(
-                    OnClientPlaybackPaused(
-                        track = ctx.track,
-                        positionMs = positionMs,
-                    )
-                )
-            }
-            PlaybackStateProto.PLAYING -> {
-                if (!ensurePlaybackLock()) return
-                val serverNow = currentServerMonotonicNow()
-                val wasPaused = ctx.state is PlaybackState.Paused
-                val playback = msg.playback?.toApi() ?: ctx.playback
-                val seekMs = anchoredPlaybackPositionMs(
-                    positionMs = msg.position_ms,
-                    anchorServerMonotonic = msg.position_anchor_server_monotonic,
-                    durationMs = ctx.track.durationMs,
-                )
-                logInvalidServerPosition("StateUpdate PLAYING", msg.position_ms, seekMs, ctx.track)
-                logger.info(
-                    "Client playback {} by server: source={} id={} title='{}' positionMs={}",
-                    if (wasPaused) "resumed" else "seeked",
-                    ctx.track.sourceId.orEmpty(),
-                    ctx.track.id,
-                    ctx.track.title,
-                    seekMs,
-                )
-                if (msg.playback != null) {
-                    logger.debug(
-                        "StateUpdate playback resource for '{}' url='{}' headers={}",
-                        ctx.track.title,
-                        playback.url,
-                        playback.headers.keys,
-                    )
-                }
-                ClientAudioPlayer.play(playback, seekMs)
-                VanillaSoundBlocker.stopBlockedSoundsIfNeeded()
-                val newStart = if (msg.position_anchor_server_monotonic != 0L) {
-                    msg.position_anchor_server_monotonic - msg.position_ms.coerceAtLeast(0L) * 1_000_000L
-                } else {
-                    ctx.serverStartMonotonic
-                }
-                currentContext = ctx.copy(
-                    playback = playback,
-                    state = PlaybackState.Playing(seekMs),
-                    serverStartMonotonic = newStart,
-                    serverResumeMonotonic = serverNow,
-                )
-                if (wasPaused) {
-                    CoreEvents.bus.fire(
-                        OnClientPlaybackResumed(
-                            track = ctx.track,
-                            positionMs = seekMs,
-                        )
-                    )
-                } else {
-                    CoreEvents.bus.fire(
-                        OnClientPlaybackSeeked(
-                            track = ctx.track,
-                            positionMs = seekMs,
-                        )
-                    )
-                }
-            }
-            PlaybackStateProto.STOPPED -> {
-                logger.info(
-                    "Client playback stopped by server: source={} id={} title='{}'",
-                    ctx.track.sourceId.orEmpty(),
-                    ctx.track.id,
-                    ctx.track.title,
-                )
-                releasePlaybackLock(clearMessage = true)
-                stopActivePlayback(fireEvent = true)
-            }
-        }
-        guiListener?.onPlaybackStateChanged()
-    }
+    fun handleSearchResponse(msg: SearchResponse) = runtime.handleSearchResponse(msg)
 
-    /**
-     * Handle a [SyncResponse] packet. Updates [serverClockOffset].
-     * Called immediately when the response arrives to minimise timing error.
-     */
-    fun handleSyncResponse(resp: SyncResponse) {
-        if (!canHandleSessionPackets()) {
-            logIgnoredSessionPacket("SyncResponse", debugOnly = true)
-            return
-        }
-        applyTimeSync(resp)
-        logger.debug(
-            "Clock offset updated: {} ns (clientSend={} serverRecv={} serverSend={})",
-            serverClockOffset,
-            resp.client_send_monotonic,
-            resp.server_recv_monotonic,
-            resp.server_send_monotonic,
-        )
-    }
+    fun handleTrackSubmitResponse(msg: TrackSubmitResponse) = runtime.handleTrackSubmitResponse(msg)
 
-    fun handleServerWelcome(msg: ServerWelcome) {
-        if (!participationRequested) {
-            logger.warn("Ignoring ServerWelcome because no MoeMusic client session was requested.")
-            return
-        }
-        msg.initial_time_sync?.let(::applyTimeSync)
-        serverHandshakeReceived = true
-        serverSessionAccepted = msg.accepted
-        if (!msg.accepted) {
-            val rejection = serverWelcomeRejection(msg)
-            lastServerWelcomeRejection = rejection
-            val failure = renderServerWelcomeRejection(rejection)
-            logger.warn(
-                "ServerWelcome rejected: reason={} clientProtocol={} serverProtocol={} detail='{}'",
-                rejection.reason,
-                rejection.clientProtocolVersion,
-                rejection.serverProtocolVersion,
-                rejection.detail.orEmpty(),
-            )
-            sourceCatalog = null
-            playbackRegistrationActive = false
-            ClientNetworkSetup.stopSyncLoop()
-            releasePlaybackLock(clearMessage = true)
-            stopActivePlayback()
-            failPendingRequests(ClientRequestException(failure))
-            val minecraft = Minecraft.getInstance()
-            minecraft.execute {
-                showPersistentRuntimeWarning(
-                    minecraft,
-                    McText.translatable("screen.moemusic.unavailable.rejected.title"),
-                    McText.literal(failure),
-                )
-            }
-            guiListener?.onSearchSourcesChanged()
-            return
-        }
-        lastServerWelcomeRejection = null
+    fun handleIdentifierSubmitResponse(msg: IdentifierSubmitResponse) = runtime.handleIdentifierSubmitResponse(msg)
 
-        sourceCatalog = SearchSourceCatalog(
-            sources = msg.sources.map { info ->
-                SearchSourceInfo(
-                    id = info.id,
-                    displayName = info.display_name.ifBlank { info.id },
-                    searchable = info.searchable,
-                )
-            },
-            defaultSourceId = msg.default_source_id,
-        )
-        playbackRegistrationActive = msg.accepted_state == ClientStateProto.CLIENT_STATE_ACTIVE
-        logger.info(
-            "MoeMusic server handshake accepted (sources={}, defaultSource='{}', acceptedState={}, active={}, serverProtocol={})",
-            sourceCatalog?.sources?.size ?: 0,
-            sourceCatalog?.defaultSourceId.orEmpty(),
-            msg.accepted_state,
-            playbackRegistrationActive,
-            msg.server_protocol_version,
-        )
-        ClientNetworkSetup.startSyncLoop()
-        if (playbackRegistrationActive) {
-            if (!isPlaybackEnabledForCurrentServer()) {
-                enterStandbyParticipation(waitForLock = false)
-            }
-        }
-        if (standbyWaitingForLock) {
-            updateInstanceLockStandby(notifyUser = true)
-            startStandbyPolling()
-        }
-        guiListener?.onSearchSourcesChanged()
-    }
+    fun handleSelectionSubmitResponse(msg: SelectionSubmitResponse) = runtime.handleSelectionSubmitResponse(msg)
 
-    /**
-     * Handle a [SearchResponse] packet (response to a client-submitted [SearchRequest]).
-     *
-     * The results are stored for display in the search GUI.
-     * Notifies any registered [guiListener].
-     */
-    fun handleSearchResponse(msg: SearchResponse) {
-        if (!canHandleDirectResponses("SearchResponse")) return
-        logger.debug(
-            "SearchResponse: query='{}' offset={} results={} total={} hasMore={} failure='{}'",
-            msg.query, msg.offset, msg.entries.size, msg.total, msg.has_more, msg.failure,
-        )
-        pendingSearchResponses.complete(msg.request_id, msg)
-        if (msg.request_id == 0L || msg.request_id >= latestSearchResponseRequestId) {
-            latestSearchResponseRequestId = msg.request_id
-            lastSearchResponse = msg
-            if (msg.offset == 0 || cachedSearchState?.query != msg.query || cachedSearchState?.sourceId != msg.source_id) {
-                cachedSearchState = CachedSearchState(
-                    query = msg.query,
-                    sourceId = msg.source_id,
-                    entries = msg.entries.map { it.toApi() },
-                    total = msg.total,
-                    hasMore = msg.has_more,
-                    failure = msg.failure.ifEmpty { null },
-                )
-            }
-        }
-        guiListener?.onSearchResponse(msg)
-    }
+    fun handleQueueResponse(msg: QueueResponse) = runtime.handleQueueResponse(msg)
 
-    /**
-     * Handle a [TrackSubmitResponse] packet.
-     */
-    fun handleTrackSubmitResponse(msg: TrackSubmitResponse) {
-        if (!canHandleDirectResponses("TrackSubmitResponse")) return
-        if (msg.failure.isNotEmpty()) {
-            logger.debug("TrackSubmitResponse failure: {}", msg.failure)
-        }
-        pendingTrackSubmitResponses.complete(msg.request_id, msg)
-        if (msg.request_id == 0L || msg.request_id >= latestTrackSubmitResponseRequestId) {
-            latestTrackSubmitResponseRequestId = msg.request_id
-            lastTrackSubmitResponse = msg
-        }
-        guiListener?.onTrackSubmitResponse(msg)
-    }
+    fun handleQueueRemoveResponse(msg: QueueRemoveResponse) = runtime.handleQueueRemoveResponse(msg)
 
-    fun handleIdentifierSubmitResponse(msg: IdentifierSubmitResponse) {
-        if (!canHandleDirectResponses("IdentifierSubmitResponse")) return
-        if (msg.failure.isNotEmpty()) {
-            logger.debug("IdentifierSubmitResponse failure: {}", msg.failure)
-        }
-        pendingIdentifierSubmitResponses.complete(msg.request_id, msg)
-        guiListener?.onIdentifierSubmitResponse(msg)
-    }
+    fun handlePlaybackControlResponse(msg: PlaybackControlResponse) = runtime.handlePlaybackControlResponse(msg)
 
-    fun handleSelectionSubmitResponse(msg: SelectionSubmitResponse) {
-        if (!canHandleDirectResponses("SelectionSubmitResponse")) return
-        if (msg.failure.isNotEmpty()) {
-            logger.debug("SelectionSubmitResponse failure: {}", msg.failure)
-        }
-        pendingSelectionSubmitResponses.complete(msg.request_id, msg)
-        guiListener?.onSelectionSubmitResponse(msg)
-    }
+    fun handleContentFilterActionResponse(msg: ContentFilterActionResponse) = runtime.handleContentFilterActionResponse(msg)
 
-    /**
-     * Handle a [QueueResponse] packet (response to a client-submitted [QueueRequest]).
-     */
-    fun handleQueueResponse(msg: QueueResponse) {
-        if (!canHandleDirectResponses("QueueResponse")) return
-        logger.debug("QueueResponse: {} tracks failure='{}'", msg.tracks.size, msg.failure)
-        pendingQueueResponses.complete(msg.request_id, msg)
-        if (msg.request_id == 0L || msg.request_id >= latestQueueResponseRequestId) {
-            latestQueueResponseRequestId = msg.request_id
-            lastQueueResponse = msg
-        }
-        guiListener?.onQueueResponse(msg)
-    }
+    fun sendSyncRequest() = runtime.sendSyncRequest()
 
-    /**
-     * Handle a [QueueRemoveResponse] packet.
-     */
-    fun handleQueueRemoveResponse(msg: QueueRemoveResponse) {
-        if (!canHandleDirectResponses("QueueRemoveResponse")) return
-        logger.debug("QueueRemoveResponse: failure='{}'", msg.failure)
-        pendingQueueRemoveResponses.complete(msg.request_id, msg)
-        if (msg.request_id == 0L || msg.request_id >= latestQueueRemoveResponseRequestId) {
-            latestQueueRemoveResponseRequestId = msg.request_id
-            lastQueueRemoveResponse = msg
-        }
-        guiListener?.onQueueRemoveResponse(msg)
-    }
+    fun sendClientStateChange(state: org.lolicode.moemusic.core.protocol.proto.ClientStateProto) =
+        runtime.sendClientStateChange(state)
 
-    /**
-     * Handle a [PlaybackControlResponse] packet.
-     */
-    fun handlePlaybackControlResponse(msg: PlaybackControlResponse) {
-        if (!canHandleDirectResponses("PlaybackControlResponse")) return
-        if (msg.failure.isNotEmpty()) {
-            logger.debug("PlaybackControlResponse failure: {}", msg.failure)
-        }
-        pendingPlaybackControlResponses.complete(msg.request_id, msg)
-        if (msg.request_id == 0L || msg.request_id >= latestPlaybackControlResponseRequestId) {
-            latestPlaybackControlResponseRequestId = msg.request_id
-            lastPlaybackControlResponse = msg
-        }
-        guiListener?.onPlaybackControlResponse(msg)
-    }
-
-    fun handleContentFilterActionResponse(msg: ContentFilterActionResponse) {
-        if (!canHandleDirectResponses("ContentFilterActionResponse")) return
-        if (msg.failure.isNotEmpty()) {
-            logger.debug("ContentFilterActionResponse failure: {}", msg.failure)
-        }
-        pendingContentFilterActionResponses.complete(msg.request_id, msg)
-        if (msg.request_id == 0L || msg.request_id >= latestContentFilterActionResponseRequestId) {
-            latestContentFilterActionResponseRequestId = msg.request_id
-            lastContentFilterActionResponse = msg
-        }
-        guiListener?.onContentFilterActionResponse(msg)
-    }
-
-    // -------------------------------------------------------------------------
-    // C→S senders (used by the GUI and sync loop)
-    // -------------------------------------------------------------------------
-
-    /**
-     * Send a [SyncRequest] to the server using bad packets directly (no NetworkChannel needed).
-     * Safe to call from any thread.
-     */
-    fun sendSyncRequest() {
-        if (!canHandleSessionPackets()) return
-        val req = SyncRequest(client_send_monotonic = System.nanoTime())
-        val id = ResourceLocation(PacketIds.SYNC_REQUEST.namespace, PacketIds.SYNC_REQUEST.path)
-        PacketSender.c2s().send(id, FriendlyByteBuf(Unpooled.wrappedBuffer(req.encode())))
-    }
-
-    /** Send the initial client hello for this connection. */
-    fun sendHandshake(locale: String, modVersion: String, protocolVersion: Int, initialState: ClientStateProto) {
-        participationRequested = true
-        playbackRegistrationActive = false
-        val now = System.nanoTime()
-        handshakeRequestedAtNanos = now
-        serverHandshakeReceived = false
-        serverSessionAccepted = false
-        serverHandshakeMissingLogged = false
-        lastServerWelcomeRejection = null
-        sourceCatalog = null
-        val msg = ClientHandshake(
-            locale = locale,
-            mod_version = modVersion,
-            protocol_version = protocolVersion,
-            initial_state = initialState,
-            client_send_monotonic = now,
-        )
-        val id = ResourceLocation(PacketIds.CLIENT_HANDSHAKE.namespace, PacketIds.CLIENT_HANDSHAKE.path)
-        PacketSender.c2s().send(id, FriendlyByteBuf(Unpooled.wrappedBuffer(msg.encode())))
-        logger.info(
-            "MoeMusic client handshake sent (locale={}, initialState={}, mod={}, protocol={})",
-            locale,
-            initialState,
-            modVersion,
-            protocolVersion,
-        )
-    }
-
-    fun sendClientStateChange(state: ClientStateProto) {
-        val blockedReason = sessionPacketBlockReason()
-        if (blockedReason != null) {
-            logger.warn("Cannot send client participation change {}: {}", state, blockedReason)
-            return
-        }
-        playbackRegistrationActive = state == ClientStateProto.CLIENT_STATE_ACTIVE
-        send(
-            PacketIds.CLIENT_STATE_CHANGE,
-            ClientStateChange(
-                state = state,
-            ).encode(),
-        )
-        logger.info("Client participation change sent: {}", state)
-    }
-
-    /** Send a [SearchRequest] to the server. Used by the search GUI. */
-    fun sendSearchRequest(query: String, sourceId: String = "", limit: Int = 20, offset: Int = 0): Long? {
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val msg = SearchRequest(query = query, source_id = sourceId, limit = limit, offset = offset, request_id = requestId)
-        send(PacketIds.SEARCH_REQUEST, msg.encode())
-        return requestId
-    }
+    fun sendSearchRequest(query: String, sourceId: String = "", limit: Int = 20, offset: Int = 0): Long? =
+        runtime.sendSearchRequest(query, sourceId, limit, offset)
 
     internal fun beginSearchRequest(query: String, sourceId: String = "", limit: Int = 20, offset: Int = 0): Deferred<SearchResponse>? =
-        beginCorrelatedRequest(pendingSearchResponses, PacketIds.SEARCH_REQUEST) { requestId ->
-            SearchRequest(query = query, source_id = sourceId, limit = limit, offset = offset, request_id = requestId).encode()
-        }
+        runtime.beginSearchRequest(query, sourceId, limit, offset)
 
-    /** Send a [QueueRequest] to fetch the current user queue. */
-    fun sendQueueRequest(): Long? {
-        val requestId = nextCorrelatedRequestId() ?: return null
-        send(PacketIds.QUEUE_REQUEST, QueueRequest(request_id = requestId).encode())
-        return requestId
-    }
+    fun sendQueueRequest(): Long? = runtime.sendQueueRequest()
 
     internal fun beginQueueRequest(): Deferred<QueueResponse>? =
-        beginCorrelatedRequest(pendingQueueResponses, PacketIds.QUEUE_REQUEST) { requestId ->
-            QueueRequest(request_id = requestId).encode()
-        }
+        runtime.beginQueueRequest()
 
-    /** Send a [QueueRemoveRequest] to remove a queued track by its stable source/track identity. */
-    fun sendQueueRemoveRequest(track: TrackInfo): Long? {
-        val sourceId = track.sourceId ?: return null
-        if (sourceId.isBlank() || track.id.isBlank()) return null
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val msg = QueueRemoveRequest(source_id = sourceId, track_id = track.id, request_id = requestId)
-        send(PacketIds.QUEUE_REMOVE_REQUEST, msg.encode())
-        return requestId
-    }
+    fun sendQueueRemoveRequest(track: TrackInfo): Long? = runtime.sendQueueRemoveRequest(track)
 
-    internal fun beginQueueRemoveRequest(sourceId: String, trackId: String): Deferred<QueueRemoveResponse>? {
-        if (sourceId.isBlank() || trackId.isBlank()) return null
-        return beginCorrelatedRequest(pendingQueueRemoveResponses, PacketIds.QUEUE_REMOVE_REQUEST) { requestId ->
-            QueueRemoveRequest(source_id = sourceId, track_id = trackId, request_id = requestId).encode()
-        }
-    }
+    internal fun beginQueueRemoveRequest(sourceId: String, trackId: String): Deferred<QueueRemoveResponse>? =
+        runtime.beginQueueRemoveRequest(sourceId, trackId)
 
-    /** Send a [TrackSubmitRequest] to enqueue a track on the server. */
-    fun sendTrackSubmit(track: TrackInfo, mode: TrackAddMode = TrackAddMode.NORMAL): Long? {
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val msg = TrackSubmitRequest(
-            source_id = track.sourceId.orEmpty(),
-            track_id = track.id,
-            mode = mode.toProto(),
-            request_id = requestId,
-        )
-        send(PacketIds.TRACK_SUBMIT, msg.encode())
-        return requestId
-    }
+    fun sendTrackSubmit(track: TrackInfo, mode: TrackAddMode = TrackAddMode.NORMAL): Long? =
+        runtime.sendTrackSubmit(track, mode)
 
-    /** Send a [TrackSubmitRequest] for a direct-track [SelectionEntry]. */
     fun sendTrackSubmit(entry: SelectionEntry, mode: TrackAddMode = TrackAddMode.NORMAL): Long? =
-        entry.toDirectTrackSubmitTrack()?.let { track -> sendTrackSubmit(track, mode) }
+        runtime.sendTrackSubmit(entry, mode)
 
     internal fun beginTrackSubmitRequest(track: TrackInfo, mode: TrackAddMode = TrackAddMode.NORMAL): Deferred<TrackSubmitResponse>? =
-        beginCorrelatedRequest(pendingTrackSubmitResponses, PacketIds.TRACK_SUBMIT) { requestId ->
-            TrackSubmitRequest(
-                source_id = track.sourceId.orEmpty(),
-                track_id = track.id,
-                mode = mode.toProto(),
-                request_id = requestId,
-            ).encode()
-        }
+        runtime.beginTrackSubmitRequest(track, mode)
 
     internal fun beginTrackSubmitRequest(entry: SelectionEntry, mode: TrackAddMode = TrackAddMode.NORMAL): Deferred<TrackSubmitResponse>? =
-        entry.toDirectTrackSubmitTrack()?.let { track -> beginTrackSubmitRequest(track, mode) }
+        runtime.beginTrackSubmitRequest(entry, mode)
 
-    fun sendIdentifierSubmit(identifier: String, mode: TrackAddMode): Long? {
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val msg = IdentifierSubmitRequest(
-            identifier = identifier,
-            mode = mode.toProto(),
-            request_id = requestId,
-        )
-        send(PacketIds.IDENTIFIER_SUBMIT, msg.encode())
-        return requestId
-    }
+    fun sendIdentifierSubmit(identifier: String, mode: TrackAddMode): Long? =
+        runtime.sendIdentifierSubmit(identifier, mode)
 
     internal fun beginIdentifierSubmitRequest(identifier: String, mode: TrackAddMode): Deferred<IdentifierSubmitResponse>? =
-        beginCorrelatedRequest(pendingIdentifierSubmitResponses, PacketIds.IDENTIFIER_SUBMIT) { requestId ->
-            IdentifierSubmitRequest(
-                identifier = identifier,
-                mode = mode.toProto(),
-                request_id = requestId,
-            ).encode()
-        }
+        runtime.beginIdentifierSubmitRequest(identifier, mode)
 
-    fun sendSelectionSubmit(entry: SelectionEntry, mode: TrackAddMode = TrackAddMode.NORMAL): Long? {
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val msg = SelectionSubmitRequest(
-            source_id = entry.sourceId.orEmpty(),
-            selection_id = entry.selectionId,
-            mode = mode.toProto(),
-            request_id = requestId,
-        )
-        send(PacketIds.SELECTION_SUBMIT, msg.encode())
-        return requestId
-    }
+    fun sendSelectionSubmit(entry: SelectionEntry, mode: TrackAddMode = TrackAddMode.NORMAL): Long? =
+        runtime.sendSelectionSubmit(entry, mode)
 
     internal fun beginSelectionSubmitRequest(entry: SelectionEntry, mode: TrackAddMode = TrackAddMode.NORMAL): Deferred<SelectionSubmitResponse>? =
-        beginCorrelatedRequest(pendingSelectionSubmitResponses, PacketIds.SELECTION_SUBMIT) { requestId ->
-            SelectionSubmitRequest(
-                source_id = entry.sourceId.orEmpty(),
-                selection_id = entry.selectionId,
-                mode = mode.toProto(),
-                request_id = requestId,
-            ).encode()
-        }
+        runtime.beginSelectionSubmitRequest(entry, mode)
 
-    fun cacheSearchState(state: CachedSearchState?) {
-        cachedSearchState = state
-    }
+    fun cacheSearchState(state: CachedSearchState?) = runtime.cacheSearchState(state)
 
-    private fun failPendingRequests(cause: Throwable) {
-        pendingSearchResponses.failAll(cause)
-        pendingQueueResponses.failAll(cause)
-        pendingTrackSubmitResponses.failAll(cause)
-        pendingIdentifierSubmitResponses.failAll(cause)
-        pendingSelectionSubmitResponses.failAll(cause)
-        pendingQueueRemoveResponses.failAll(cause)
-        pendingPlaybackControlResponses.failAll(cause)
-        pendingContentFilterActionResponses.failAll(cause)
-    }
+    fun clearContext() = runtime.clearContext()
 
-    private fun SelectionEntry.toDirectTrackSubmitTrack(): TrackInfo? {
-        val trackId = directTrackId?.takeIf(String::isNotBlank) ?: return null
-        return TrackInfo(
-            id = trackId,
-            title = title,
-            artists = artists,
-            durationMs = durationMs,
-            sourceId = sourceId,
-            album = album,
-            unavailableReason = unavailableReason,
-        )
-    }
-
-    /** Send a [PlaybackControlRequest] for a pause/resume/skip/stop/seek action. */
-    fun sendPlaybackControl(action: PlaybackControlAction, positionMs: Long = 0L): Long? {
-        logInvalidPlaybackControl(action, positionMs)
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val msg = PlaybackControlRequest(action = action, position_ms = positionMs, request_id = requestId)
-        send(PacketIds.PLAYBACK_CONTROL_REQUEST, msg.encode())
-        return requestId
-    }
+    fun sendPlaybackControl(action: PlaybackControlAction, positionMs: Long = 0L): Long? =
+        runtime.sendPlaybackControl(action, positionMs)
 
     internal fun beginPlaybackControlRequest(action: PlaybackControlAction, positionMs: Long = 0L): Deferred<PlaybackControlResponse>? =
-        beginCorrelatedRequest(pendingPlaybackControlResponses, PacketIds.PLAYBACK_CONTROL_REQUEST) { requestId ->
-            logInvalidPlaybackControl(action, positionMs)
-            PlaybackControlRequest(action = action, position_ms = positionMs, request_id = requestId).encode()
-        }
+        runtime.beginPlaybackControlRequest(action, positionMs)
 
-    fun sendContentFilterTrackAction(sourceId: String, trackId: String, note: String?, ban: Boolean): Long? {
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val msg = ContentFilterActionRequest(
-            action = if (ban) ContentFilterActionProto.CONTENT_FILTER_ACTION_BAN else ContentFilterActionProto.CONTENT_FILTER_ACTION_UNBAN,
-            target = ContentFilterTargetProto.CONTENT_FILTER_TARGET_TRACK,
-            source_id = sourceId,
-            value_id = trackId,
-            note = note.orEmpty(),
-            request_id = requestId,
-        )
-        send(PacketIds.CONTENT_FILTER_ACTION_REQUEST, msg.encode())
-        return requestId
-    }
+    fun sendContentFilterTrackAction(sourceId: String, trackId: String, note: String?, ban: Boolean): Long? =
+        runtime.sendContentFilterTrackAction(sourceId, trackId, note, ban)
 
     internal fun beginContentFilterTrackActionRequest(
         sourceId: String,
@@ -913,16 +248,7 @@ object ClientPlaybackHandler {
         note: String?,
         ban: Boolean,
     ): Deferred<ContentFilterActionResponse>? =
-        beginCorrelatedRequest(pendingContentFilterActionResponses, PacketIds.CONTENT_FILTER_ACTION_REQUEST) { requestId ->
-            ContentFilterActionRequest(
-                action = if (ban) ContentFilterActionProto.CONTENT_FILTER_ACTION_BAN else ContentFilterActionProto.CONTENT_FILTER_ACTION_UNBAN,
-                target = ContentFilterTargetProto.CONTENT_FILTER_TARGET_TRACK,
-                source_id = sourceId,
-                value_id = trackId,
-                note = note.orEmpty(),
-                request_id = requestId,
-            ).encode()
-        }
+        runtime.beginContentFilterTrackActionRequest(sourceId, trackId, note, ban)
 
     internal fun beginContentFilterArtistActionRequest(
         sourceId: String,
@@ -930,483 +256,77 @@ object ClientPlaybackHandler {
         note: String?,
         ban: Boolean,
     ): Deferred<ContentFilterActionResponse>? =
-        beginCorrelatedRequest(pendingContentFilterActionResponses, PacketIds.CONTENT_FILTER_ACTION_REQUEST) { requestId ->
-            ContentFilterActionRequest(
-                action = if (ban) ContentFilterActionProto.CONTENT_FILTER_ACTION_BAN else ContentFilterActionProto.CONTENT_FILTER_ACTION_UNBAN,
-                target = ContentFilterTargetProto.CONTENT_FILTER_TARGET_ARTIST,
-                source_id = sourceId,
-                value_id = artistId,
-                note = note.orEmpty(),
-                request_id = requestId,
-            ).encode()
+        runtime.beginContentFilterArtistActionRequest(sourceId, artistId, note, ban)
+
+    fun currentPositionMs(ctx: TrackContext): Long = runtime.currentPositionMs(ctx)
+
+    fun sourceDisplayName(sourceId: String?): String = runtime.sourceDisplayName(sourceId)
+
+    fun isServerHandshakeMissing(nowNanos: Long = System.nanoTime()): Boolean =
+        runtime.isServerHandshakeMissing(nowNanos)
+
+    fun currentLyricLine(positionMs: Long): LyricLine? = runtime.currentLyricLine(positionMs)
+
+    fun currentSecondaryLyricLine(positionMs: Long): LyricLine? = runtime.currentSecondaryLyricLine(positionMs)
+
+    internal fun ensureDirectRequestSessionReady() = runtime.ensureDirectRequestSessionReady()
+
+    private class MinecraftPlaybackPlatform : ClientPlaybackPlatform {
+        override val name: String = "Minecraft"
+        override val clientModVersion: String
+            get() = ClientPlaybackHandler.clientModVersion
+        override val clientProtocolVersion: Int
+            get() = ClientPlaybackHandler.clientProtocolVersion
+        override val audio: ClientPlaybackAudioAdapter = MinecraftAudioAdapter()
+
+        override fun hasConnection(): Boolean =
+            Minecraft.getInstance().connection != null
+
+        override fun currentServerScope(): ClientServerScope? =
+            ClientPlaybackHandler.currentServerScope(Minecraft.getInstance())
+
+        override fun currentLocale(): String =
+            ClientLocalization.selectedLanguage()
+
+        override fun clientConfig(): ClientConfig =
+            ModConfigManager.config.client
+
+        override fun sendToServer(packetId: PacketId, payload: ByteArray) {
+            NetworkSetup.channel.sendToServer(packetId, payload)
         }
 
-    /** Clear connection-scoped local state on disconnect so stale packets do not restart playback. */
-    fun clearContext() {
-        val disconnect = ClientRequestException("Disconnected from MoeMusic session.")
-        failPendingRequests(disconnect)
-        participationRequested = false
-        playbackRegistrationActive = false
-        standbyWaitingForLock = false
-        instanceLockWaitNotified = false
-        latestSearchResponseRequestId = 0L
-        latestQueueResponseRequestId = 0L
-        latestTrackSubmitResponseRequestId = 0L
-        latestQueueRemoveResponseRequestId = 0L
-        latestPlaybackControlResponseRequestId = 0L
-        latestContentFilterActionResponseRequestId = 0L
-        serverClockOffset = 0L
-        timeSyncEstablished = false
-        stopStandbyPolling()
-        currentContext = null
-        currentLyrics = null
-        currentSecondaryLyrics = null
-        lastSearchResponse = null
-        lastQueueResponse = null
-        lastTrackSubmitResponse = null
-        lastQueueRemoveResponse = null
-        lastPlaybackControlResponse = null
-        lastContentFilterActionResponse = null
-        lastLocalPlaybackBlockedMessage = null
-        lastInstanceLockMessage = null
-        sourceCatalog = null
-        handshakeRequestedAtNanos = 0L
-        serverHandshakeReceived = false
-        serverSessionAccepted = false
-        serverHandshakeMissingLogged = false
-        lastServerWelcomeRejection = null
-        // Search cache is intentionally kept — the GUI may restore recent results across reconnects.
-    }
+        override fun executeOnClientThread(block: () -> Unit) {
+            Minecraft.getInstance().execute(block)
+        }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
+        override fun render(text: LocalizedText): String =
+            ClientLocalization.render(text)
 
-    private fun applyPlaybackSnapshot(snapshot: PlaybackSnapshot, fromSyncState: Boolean) {
-        if (!canHandlePlaybackPackets()) {
-            logIgnoredPlaybackPacket("PlaybackSnapshot", "state=${snapshot.state}")
-            return
-        }
-        val trackProto = snapshot.track ?: run {
-            logger.warn("Ignoring playback snapshot without track metadata (state={}).", snapshot.state)
-            return
-        }
-        val playback = snapshot.playback?.toApi() ?: run {
-            logger.error("Playback snapshot for '{}' is missing playback details; refusing to start audio.", trackProto.title)
-            return
-        }
-        val track = trackProto.toApi().withLyrics(snapshot.lyric_lrc, snapshot.secondary_lyric_lrc)
-
-        if (playback.url.isBlank()) {
-            logger.error("Playback snapshot for '{}' is missing a playable URL; refusing to start audio.", track.title)
-            stopActivePlayback()
-            return
-        }
-        if (!applyClientMediaPolicy(track, playback.url)) {
-            stopActivePlayback()
-            return
-        }
-        val locallyAllowedTrack = applyLocalContentFilter(track) ?: run {
-            stopActivePlayback()
-            return
-        }
-        currentLyrics = parseLyrics(locallyAllowedTrack.lyricLrc)
-        currentSecondaryLyrics = parseLyrics(locallyAllowedTrack.secondaryLyricLrc)
-
-        when (snapshot.state) {
-            PlaybackStateProto.PLAYING -> {
-                if (!ensurePlaybackLock()) return
-                val serverNow = currentServerMonotonicNow()
-                val seekMs = anchoredPlaybackPositionMs(
-                    positionMs = snapshot.position_ms,
-                    anchorServerMonotonic = snapshot.position_anchor_server_monotonic,
-                    durationMs = locallyAllowedTrack.durationMs,
-                )
-                logInvalidServerPosition("PlaybackSnapshot PLAYING", snapshot.position_ms, seekMs, locallyAllowedTrack)
-                logger.info(
-                    "Client playback started from snapshot: source={} id={} title='{}' positionMs={} fromSyncState={}",
-                    locallyAllowedTrack.sourceId.orEmpty(),
-                    locallyAllowedTrack.id,
-                    locallyAllowedTrack.title,
-                    seekMs,
-                    fromSyncState,
-                )
-                logger.debug(
-                    "Playback snapshot resource for '{}' url='{}' headers={}",
-                    locallyAllowedTrack.title,
-                    playback.url,
-                    playback.headers.keys,
-                )
-                ClientAudioPlayer.play(playback, seekMs)
-                VanillaSoundBlocker.stopBlockedSoundsIfNeeded()
-                currentContext = TrackContext(
-                    track = locallyAllowedTrack,
-                    playback = playback,
-                    state = PlaybackState.Playing(seekMs),
-                    serverStartMonotonic = if (snapshot.position_anchor_server_monotonic != 0L) {
-                        snapshot.position_anchor_server_monotonic - snapshot.position_ms.coerceAtLeast(0L) * 1_000_000L
-                    } else {
-                        serverNow - seekMs * 1_000_000L
-                    },
-                    serverResumeMonotonic = serverNow,
-                )
-                CoreEvents.bus.fire(
-                    OnClientPlaybackStarted(
-                        track = locallyAllowedTrack,
-                        playback = playback,
-                        positionMs = seekMs,
-                        fromSyncState = fromSyncState,
-                    )
+        override fun showPersistentWarning(title: LocalizedText, message: String) {
+            val minecraft = Minecraft.getInstance()
+            minecraft.execute {
+                showPersistentRuntimeWarning(
+                    minecraft,
+                    ClientLocalization.component(title),
+                    McText.literal(message),
                 )
             }
+        }
 
-            PlaybackStateProto.PAUSED -> {
-                if (!ensurePlaybackLock()) return
-                val posMs = normalizeClientPosition(snapshot.position_ms, locallyAllowedTrack.durationMs)
-                val serverNow = currentServerMonotonicNow()
-                logInvalidServerPosition("PlaybackSnapshot PAUSED", snapshot.position_ms, posMs, locallyAllowedTrack)
-                logger.info(
-                    "Client playback loaded paused snapshot: source={} id={} title='{}' positionMs={} fromSyncState={}",
-                    locallyAllowedTrack.sourceId.orEmpty(),
-                    locallyAllowedTrack.id,
-                    locallyAllowedTrack.title,
-                    posMs,
-                    fromSyncState,
+        override fun showLocalPlaybackBlocked(title: LocalizedText, message: String) {
+            val minecraft = Minecraft.getInstance()
+            minecraft.execute {
+                showPersistentRuntimeWarning(
+                    minecraft,
+                    ClientLocalization.component(title),
+                    McText.literal(message),
                 )
-                logger.debug(
-                    "Paused playback snapshot resource for '{}' url='{}' headers={}",
-                    locallyAllowedTrack.title,
-                    playback.url,
-                    playback.headers.keys,
-                )
-                ClientAudioPlayer.play(playback, posMs)
-                ClientAudioPlayer.pause()
-                currentContext = TrackContext(
-                    track = locallyAllowedTrack,
-                    playback = playback,
-                    state = PlaybackState.Paused(posMs),
-                    serverStartMonotonic = serverNow - posMs * 1_000_000L,
-                    serverResumeMonotonic = serverNow,
-                )
-                CoreEvents.bus.fire(
-                    OnClientPlaybackStarted(
-                        track = locallyAllowedTrack,
-                        playback = playback,
-                        positionMs = posMs,
-                        fromSyncState = fromSyncState,
-                    )
-                )
-            }
-
-            PlaybackStateProto.STOPPED -> {
-                logger.info("Received stopped playback snapshot; clearing local playback context.")
-                releasePlaybackLock(clearMessage = true)
-                stopActivePlayback(fireEvent = true)
-            }
-        }
-        guiListener?.onPlaybackStateChanged()
-    }
-
-    private fun applyTimeSync(resp: SyncResponse) {
-        serverClockOffset = timeSyncHandler.computeClientOffset(resp)
-        timeSyncEstablished = true
-    }
-
-    private fun anchoredPlaybackPositionMs(
-        positionMs: Long,
-        anchorServerMonotonic: Long,
-        durationMs: Long,
-    ): Long {
-        val basePositionMs = positionMs.coerceAtLeast(0L)
-        if (!timeSyncEstablished || anchorServerMonotonic == 0L) {
-            return normalizeClientPosition(basePositionMs, durationMs)
-        }
-        val elapsedMs = (currentServerMonotonicNow() - anchorServerMonotonic) / 1_000_000L
-        return normalizeClientPosition(basePositionMs + elapsedMs, durationMs)
-    }
-
-    private fun normalizeClientPosition(positionMs: Long, durationMs: Long): Long {
-        val nonNegative = positionMs.coerceAtLeast(0L)
-        return if (durationMs > 0L) nonNegative.coerceAtMost(durationMs) else nonNegative
-    }
-
-    private fun currentServerMonotonicNow(): Long = System.nanoTime() + serverClockOffset
-
-    fun currentPositionMs(ctx: TrackContext): Long =
-        when (val state = ctx.state) {
-            is PlaybackState.Playing -> ClientAudioPlayer.currentPositionMs()
-            is PlaybackState.Paused -> state.positionMs
-            PlaybackState.Stopped -> 0L
-        }.coerceAtMost(ctx.track.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
-
-    fun sourceDisplayName(sourceId: String?): String {
-        if (sourceId.isNullOrBlank()) return ""
-        return sourceCatalog?.sources?.firstOrNull { it.id == sourceId }?.displayName ?: sourceId
-    }
-
-    fun isServerHandshakeMissing(nowNanos: Long = System.nanoTime()): Boolean {
-        val missing = participationRequested &&
-            handshakeRequestedAtNanos != 0L &&
-            !serverHandshakeReceived &&
-            nowNanos - handshakeRequestedAtNanos >= HANDSHAKE_GRACE_NANOS
-        if (missing && !serverHandshakeMissingLogged) {
-            serverHandshakeMissingLogged = true
-            logger.warn(
-                "No MoeMusic server handshake response after {} ms; the server may not have MoeMusic installed or its packet channel is unavailable.",
-                HANDSHAKE_GRACE_NANOS / 1_000_000L,
-            )
-        }
-        return missing
-    }
-
-    fun currentLyricLine(positionMs: Long): LyricLine? = currentLyrics?.lineAt(positionMs)
-
-    fun currentSecondaryLyricLine(positionMs: Long): LyricLine? = currentSecondaryLyrics?.lineAt(positionMs)
-
-    /** Playback broadcasts only apply while this client is actively registered. */
-    private fun canHandlePlaybackPackets(): Boolean =
-        canHandleSessionPackets() && playbackRegistrationActive && isPlaybackEnabledForCurrentServer()
-
-    /** Session packets stay available for both active and standby clients after welcome acceptance. */
-    private fun canHandleSessionPackets(): Boolean =
-        participationRequested && serverSessionAccepted
-
-    /** Direct request/response packets stay available during local standby. */
-    private fun canHandleDirectResponses(packetName: String): Boolean {
-        val reason = sessionPacketBlockReason()
-        if (reason != null) {
-            logger.warn("Ignoring {}: {}", packetName, reason)
-            return false
-        }
-        return true
-    }
-
-    private fun sessionPacketBlockReason(): String? = when {
-        !participationRequested -> "client session has not been requested"
-        !serverHandshakeReceived -> "server handshake has not completed"
-        !serverSessionAccepted -> lastServerWelcomeRejection?.let(::renderServerWelcomeRejection)
-            ?: "server handshake was rejected"
-        else -> null
-    }
-
-    private fun playbackPacketBlockReason(): String? {
-        sessionPacketBlockReason()?.let { return it }
-        if (!playbackRegistrationActive) {
-            return if (standbyWaitingForLock) {
-                "client is in standby waiting for the local playback lock"
-            } else {
-                "client is in standby"
-            }
-        }
-        if (!isPlaybackEnabledForCurrentServer()) {
-            return "playback is disabled for the current server"
-        }
-        return null
-    }
-
-    private fun logIgnoredSessionPacket(packetName: String, debugOnly: Boolean = false) {
-        val reason = sessionPacketBlockReason() ?: return
-        if (debugOnly) {
-            logger.debug("Ignoring {}: {}", packetName, reason)
-        } else {
-            logger.warn("Ignoring {}: {}", packetName, reason)
-        }
-    }
-
-    private fun logIgnoredPlaybackPacket(packetName: String, detail: String = "") {
-        val reason = playbackPacketBlockReason() ?: return
-        val detailSuffix = if (detail.isBlank()) "" else " ($detail)"
-        logger.warn("Ignoring {}{}: {}", packetName, detailSuffix, reason)
-    }
-
-    private fun startSession(minecraft: Minecraft = Minecraft.getInstance()) {
-        stopStandbyPolling()
-        val desired = desiredParticipation(minecraft)
-        standbyWaitingForLock = desired.waitForLock
-        if (!desired.waitForLock) {
-            clearInstanceLockStandby()
-        }
-        val locale = minecraft.languageManager.selected.code
-        sendHandshake(locale, clientModVersion, clientProtocolVersion, desired.state)
-        ClientNetworkSetup.stopSyncLoop()
-        if (desired.waitForLock) {
-            updateInstanceLockStandby(notifyUser = false)
-        }
-    }
-
-    private fun applyDesiredParticipation(desired: DesiredParticipation) {
-        standbyWaitingForLock = desired.waitForLock
-        if (!desired.waitForLock) {
-            stopStandbyPolling()
-            clearInstanceLockStandby()
-        }
-        when (desired.state) {
-            ClientStateProto.CLIENT_STATE_ACTIVE -> enterActiveParticipation()
-            ClientStateProto.CLIENT_STATE_STANDBY -> enterStandbyParticipation(desired.waitForLock)
-        }
-    }
-
-    private fun desiredParticipation(minecraft: Minecraft = Minecraft.getInstance()): DesiredParticipation {
-        val playbackEnabled = isPlaybackEnabledForCurrentServer(minecraft)
-        if (!playbackEnabled) {
-            return DesiredParticipation(
-                state = ClientStateProto.CLIENT_STATE_STANDBY,
-                waitForLock = false,
-            )
-        }
-        // Initial hello / standby polling only probe the shared lock. Actual ownership is
-        // acquired later from ensurePlaybackLock(...) once playback packets make audio relevant.
-        val waitingForLock = isGlobalInstancePlaybackLockEnabled() && !InstancePlaybackLock.probeAvailable()
-        return DesiredParticipation(
-            state = if (waitingForLock) ClientStateProto.CLIENT_STATE_STANDBY else ClientStateProto.CLIENT_STATE_ACTIVE,
-            waitForLock = waitingForLock,
-        )
-    }
-
-    private fun enterActiveParticipation() {
-        stopStandbyPolling()
-        standbyWaitingForLock = false
-        clearInstanceLockStandby()
-        if (playbackRegistrationActive) {
-            logger.debug("Client participation is already ACTIVE.")
-            return
-        }
-        if (!serverSessionAccepted) {
-            logger.debug("Deferring ACTIVE participation request until the server handshake is accepted.")
-            return
-        }
-        logger.info("Requesting ACTIVE MoeMusic participation.")
-        sendClientStateChange(ClientStateProto.CLIENT_STATE_ACTIVE)
-    }
-
-    private fun enterStandbyParticipation(waitForLock: Boolean) {
-        val hadActiveRegistration = playbackRegistrationActive
-        playbackRegistrationActive = false
-        releasePlaybackLock(clearMessage = !waitForLock)
-        stopActivePlayback()
-        if (hadActiveRegistration) {
-            logger.info(
-                "Requesting STANDBY MoeMusic participation (waitForLock={}).",
-                waitForLock,
-            )
-            sendClientStateChange(ClientStateProto.CLIENT_STATE_STANDBY)
-        } else {
-            logger.info("Client is in STANDBY MoeMusic participation (waitForLock={}).", waitForLock)
-        }
-        if (waitForLock) {
-            updateInstanceLockStandby(notifyUser = serverHandshakeReceived)
-            startStandbyPolling()
-        } else {
-            stopStandbyPolling()
-        }
-    }
-
-    private fun TrackInfo.withLyrics(primary: String, secondary: String): TrackInfo = copy(
-        lyricLrc = primary.ifEmpty { null },
-        secondaryLyricLrc = secondary.ifEmpty { null },
-        lyricsFetched = true,
-    )
-
-    private fun applyClientMediaPolicy(track: TrackInfo, url: String): Boolean =
-        when (val verdict = ClientMediaFirewall.evaluate(url)) {
-            MediaUrlPolicyResult.Allow -> true
-            is MediaUrlPolicyResult.Reject -> {
-                val message = renderLocalized(
-                    LocalizedText.key(
-                        "screen.moemusic.playback.local_media_blocked",
-                        track.title.ifBlank { track.id },
-                        verdict.reason,
-                    )
-                )
-                lastLocalPlaybackBlockedMessage = message
-                logger.info("Track '{}' blocked by local media policy: {}", track.title, verdict.reason.debugString())
-                guiListener?.onLocalPlaybackBlocked(message)
-                val minecraft = Minecraft.getInstance()
-                minecraft.execute {
-                    showPersistentRuntimeWarning(
-                        minecraft,
-                        McText.translatable("screen.moemusic.playback.toast.title"),
-                        McText.literal(message),
-                    )
-                }
-                false
             }
         }
 
-    private fun applyLocalContentFilter(track: TrackInfo): TrackInfo? {
-        if (!ContentFilterRuntime.clientFilterEnabled()) return track
-        val reason = ContentFilterRuntime.trackBlockReason(track) ?: return track
-        val message = renderLocalized(
-            LocalizedText.key(
-                "screen.moemusic.playback.local_filter_blocked",
-                track.title.ifBlank { track.id },
-                reason,
-            )
-        )
-        lastLocalPlaybackBlockedMessage = message
-        logger.info("Track '{}' blocked by local content filter: {}", track.title, reason.debugString())
-        guiListener?.onLocalPlaybackBlocked(message)
-        val minecraft = Minecraft.getInstance()
-        minecraft.execute {
-            showPersistentRuntimeWarning(
-                minecraft,
-                McText.translatable("screen.moemusic.filter.toast.title"),
-                McText.literal(message),
-            )
-        }
-        return null
-    }
-
-    private fun isGlobalInstancePlaybackLockEnabled(): Boolean =
-        ModConfigManager.config.client.globalInstancePlaybackLock
-
-    private fun ensurePlaybackLock(): Boolean {
-        if (!isGlobalInstancePlaybackLockEnabled()) {
-            releasePlaybackLock(clearMessage = true)
-            return true
-        }
-        if (InstancePlaybackLock.tryAcquire()) {
-            stopStandbyPolling()
-            standbyWaitingForLock = false
-            clearInstanceLockStandby()
-            return true
-        }
-
-        enterStandbyForInstanceLock()
-        return false
-    }
-
-    private fun enterStandbyForInstanceLock() {
-        if (!participationRequested) return
-
-        standbyWaitingForLock = true
-        val hadActiveRegistration = playbackRegistrationActive
-        playbackRegistrationActive = false
-        if (hadActiveRegistration) {
-            logger.info("Local playback lock unavailable; requesting STANDBY MoeMusic participation.")
-            sendClientStateChange(ClientStateProto.CLIENT_STATE_STANDBY)
-        }
-        releasePlaybackLock(clearMessage = false)
-        stopActivePlayback()
-        updateInstanceLockStandby(notifyUser = true)
-        startStandbyPolling()
-    }
-
-    private fun releasePlaybackLock(clearMessage: Boolean) {
-        InstancePlaybackLock.release()
-        if (clearMessage) {
-            clearInstanceLockStandby()
-        }
-    }
-
-    private fun updateInstanceLockStandby(notifyUser: Boolean) {
-        val message = renderInstanceLockWaitMessage()
-        lastInstanceLockMessage = message
-        guiListener?.onInstancePlaybackStandby(message)
-        if (!notifyUser || instanceLockWaitNotified) return
-        instanceLockWaitNotified = true
-        val minecraft = Minecraft.getInstance()
-        if (guiListener == null) {
+        override fun showInstanceLockStandby(message: String) {
+            if (ClientPlaybackHandler.guiListener != null) return
+            val minecraft = Minecraft.getInstance()
             minecraft.execute {
                 showWrappedSystemToast(
                     minecraft,
@@ -1416,167 +336,80 @@ object ClientPlaybackHandler {
                 )
             }
         }
-    }
 
-    private fun clearInstanceLockStandby() {
-        instanceLockWaitNotified = false
-        lastInstanceLockMessage = null
-        guiListener?.onInstancePlaybackStandby(null)
-    }
-
-    private fun renderInstanceLockWaitMessage(): String =
-        renderLocalized(LocalizedText.key("screen.moemusic.playback.instance_lock_waiting"))
-
-    private fun startStandbyPolling() {
-        if (
-            !participationRequested ||
-            !serverHandshakeReceived ||
-            !standbyWaitingForLock ||
-            playbackRegistrationActive ||
-            !isGlobalInstancePlaybackLockEnabled()
-        ) {
-            return
-        }
-        if (standbyPollJob?.isActive == true) return
-
-        standbyPollJob = standbyScope.launch {
-            while (isActive) {
-                delay(STANDBY_LOCK_POLL_INTERVAL_MS.milliseconds)
-                if (!participationRequested || !standbyWaitingForLock || playbackRegistrationActive) return@launch
-                if (!isPlaybackEnabledForCurrentServer()) return@launch
-
-                if (InstancePlaybackLock.probeAvailable()) {
-                    logger.info("Local playback lock became available; requesting ACTIVE MoeMusic participation.")
-                    Minecraft.getInstance().execute {
-                        if (!participationRequested || !standbyWaitingForLock || playbackRegistrationActive) return@execute
-                        if (!isPlaybackEnabledForCurrentServer()) return@execute
-                        applyDesiredParticipation(desiredParticipation())
-                    }
-                    return@launch
-                }
-            }
+        override fun stopBlockedPlatformSoundsIfNeeded() {
+            VanillaSoundBlocker.stopBlockedSoundsIfNeeded()
         }
     }
 
-    private fun stopStandbyPolling() {
-        standbyPollJob?.cancel()
-        standbyPollJob = null
-    }
-
-    private fun stopActivePlayback(fireEvent: Boolean = false) {
-        val stoppedTrack = currentContext?.track
-        ClientAudioPlayer.stop()
-        currentContext = null
-        currentLyrics = null
-        currentSecondaryLyrics = null
-        if (fireEvent && stoppedTrack != null) {
-            CoreEvents.bus.fire(OnClientPlaybackStopped(stoppedTrack))
+    private class MinecraftAudioAdapter : ClientPlaybackAudioAdapter {
+        override fun play(playback: PlaybackResource, seekMs: Long) {
+            ClientAudioPlayer.play(playback, seekMs)
         }
-        guiListener?.onPlaybackStateChanged()
-    }
 
-    private fun logInvalidPlaybackControl(action: PlaybackControlAction, positionMs: Long) {
-        if (action != PlaybackControlAction.SEEK) return
-        val durationMs = currentContext?.track?.durationMs ?: 0L
-        val invalid = positionMs < 0L || (durationMs > 0L && positionMs > durationMs)
-        if (invalid) {
-            logger.warn(
-                "Sending SEEK with out-of-range position: requestedMs={} durationMs={}",
-                positionMs,
-                durationMs,
-            )
+        override fun pause() {
+            ClientAudioPlayer.pause()
+        }
+
+        override fun stop() {
+            ClientAudioPlayer.stop()
+        }
+
+        override fun currentPositionMs(): Long =
+            ClientAudioPlayer.currentPositionMs()
+
+        override fun clearSavedState() {
+            ClientAudioPlayer.clearSavedState()
         }
     }
 
-    private fun logInvalidServerPosition(origin: String, requestedMs: Long, normalizedMs: Long, track: TrackInfo) {
-        val durationMs = track.durationMs
-        val invalid = requestedMs < 0L || (durationMs > 0L && requestedMs > durationMs)
-        if (invalid) {
-            logger.warn(
-                "{} carried an out-of-range playback position: requestedMs={} normalizedMs={} durationMs={} source={} id={} title='{}'",
-                origin,
-                requestedMs,
-                normalizedMs,
-                durationMs,
-                track.sourceId.orEmpty(),
-                track.id,
-                track.title,
-            )
+    private class MinecraftPlaybackListener : ClientPlaybackRuntimeListener {
+        override fun onSearchSourcesChanged(catalog: SearchSourceCatalog?) {
+            guiListener?.onSearchSourcesChanged()
+        }
+
+        override fun onSearchResponse(response: SearchResponse) {
+            guiListener?.onSearchResponse(response)
+        }
+
+        override fun onTrackSubmitResponse(response: TrackSubmitResponse) {
+            guiListener?.onTrackSubmitResponse(response)
+        }
+
+        override fun onIdentifierSubmitResponse(response: IdentifierSubmitResponse) {
+            guiListener?.onIdentifierSubmitResponse(response)
+        }
+
+        override fun onSelectionSubmitResponse(response: SelectionSubmitResponse) {
+            guiListener?.onSelectionSubmitResponse(response)
+        }
+
+        override fun onQueueResponse(response: QueueResponse) {
+            guiListener?.onQueueResponse(response)
+        }
+
+        override fun onQueueRemoveResponse(response: QueueRemoveResponse) {
+            guiListener?.onQueueRemoveResponse(response)
+        }
+
+        override fun onPlaybackControlResponse(response: PlaybackControlResponse) {
+            guiListener?.onPlaybackControlResponse(response)
+        }
+
+        override fun onContentFilterActionResponse(response: ContentFilterActionResponse) {
+            guiListener?.onContentFilterActionResponse(response)
+        }
+
+        override fun onLocalPlaybackBlocked(message: String) {
+            guiListener?.onLocalPlaybackBlocked(message)
+        }
+
+        override fun onInstancePlaybackStandby(message: String?) {
+            guiListener?.onInstancePlaybackStandby(message)
+        }
+
+        override fun onPlaybackStateChanged() {
+            guiListener?.onPlaybackStateChanged()
         }
     }
-
-    private fun TrackAddMode.toProto(): TrackAddModeProto = when (this) {
-        TrackAddMode.NORMAL -> TrackAddModeProto.TRACK_ADD_MODE_NORMAL
-        TrackAddMode.SKIP_AUTOPLAY -> TrackAddModeProto.TRACK_ADD_MODE_SKIP_AUTOPLAY
-        TrackAddMode.PLAY_NOW -> TrackAddModeProto.TRACK_ADD_MODE_PLAY_NOW
-    }
-
-    internal fun ensureDirectRequestSessionReady() {
-        val minecraft = Minecraft.getInstance()
-        if (minecraft.connection == null) {
-            throw ClientRequestException("Not connected to a Minecraft server.")
-        }
-        if (!participationRequested) {
-            throw ClientRequestException("MoeMusic client session is not initialized for this connection.")
-        }
-        if (!serverHandshakeReceived) {
-            throw ClientRequestException("MoeMusic server handshake has not completed yet.")
-        }
-        if (!serverSessionAccepted) {
-            val rejection = lastServerWelcomeRejection
-            throw ClientRequestException(
-                if (rejection != null) renderServerWelcomeRejection(rejection)
-                else renderLocalized(LocalizedText.key("screen.moemusic.unavailable.rejected.body"))
-            )
-        }
-    }
-
-    private fun nextCorrelatedRequestId(): Long? {
-        sessionPacketBlockReason()?.let { reason ->
-            logger.warn("Cannot send MoeMusic request: {}", reason)
-            return null
-        }
-        return requestIdCounter.getAndIncrement().coerceAtLeast(1L)
-    }
-
-    private fun <T> beginCorrelatedRequest(
-        registry: PendingRequestRegistry<T>,
-        packetId: PacketId,
-        payloadFactory: (Long) -> ByteArray,
-    ): Deferred<T>? {
-        val requestId = nextCorrelatedRequestId() ?: return null
-        val deferred = registry.register(requestId)
-        send(packetId, payloadFactory(requestId))
-        return deferred
-    }
-
-    private fun send(packetId: PacketId, payload: ByteArray) {
-        val id = ResourceLocation(packetId.namespace, packetId.path)
-        PacketSender.c2s().send(id, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
-    }
-
-    private fun serverWelcomeRejection(msg: ServerWelcome): ServerWelcomeRejection =
-        ServerWelcomeRejection(
-            reason = when (msg.reject_reason) {
-                ServerWelcomeRejectReason.SERVER_WELCOME_REJECT_PROTOCOL_MISMATCH ->
-                    ServerWelcomeRejectionReason.PROTOCOL_MISMATCH
-                ServerWelcomeRejectReason.SERVER_WELCOME_REJECT_SERVER_ERROR ->
-                    ServerWelcomeRejectionReason.SERVER_ERROR
-                ServerWelcomeRejectReason.SERVER_WELCOME_REJECT_UNSPECIFIED ->
-                    if (msg.server_protocol_version != 0 && msg.server_protocol_version != clientProtocolVersion) {
-                        ServerWelcomeRejectionReason.PROTOCOL_MISMATCH
-                    } else {
-                        ServerWelcomeRejectionReason.UNKNOWN
-                    }
-            },
-            clientProtocolVersion = clientProtocolVersion,
-            serverProtocolVersion = msg.server_protocol_version,
-            detail = msg.failure.ifBlank { null },
-        )
-
-    private fun renderServerWelcomeRejection(rejection: ServerWelcomeRejection): String =
-        renderLocalized(rejection.toLocalizedText())
-
-    private fun renderLocalized(text: LocalizedText): String =
-        ClientLocalization.render(text)
 }
