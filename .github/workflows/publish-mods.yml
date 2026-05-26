@@ -24,6 +24,11 @@ on:
         options: [stable, beta, alpha]
         required: true
         default: 'stable'
+      publish_curseforge:
+        description: 'Publish to CurseForge'
+        type: boolean
+        required: false
+        default: false
       dry_run:
         description: 'Build and validate publish tasks without uploading'
         type: boolean
@@ -80,12 +85,18 @@ jobs:
             exit 1
           fi
 
+          selected_destinations=("github" "modrinth")
+          if [[ "${{ inputs.publish_curseforge }}" == "true" ]]; then
+            selected_destinations+=("curseforge")
+          fi
+          destinations="$(IFS=,; echo "${selected_destinations[*]}")"
+
           chmod +x ./gradlew
           commitish="$(git rev-parse HEAD)"
 
           ./gradlew \
             -Pmoemusic.useCompositeShared=false \
-            -Pmoemusic.publish.destinations=github,modrinth,curseforge \
+            -Pmoemusic.publish.destinations="$destinations" \
             -Pmoemusic.publish.loaders="$loaders" \
             -Pmoemusic.publish.type="${{ inputs.version_type }}" \
             -Pmoemusic.publish.branch="$GITHUB_REF_NAME" \

@@ -76,7 +76,7 @@ fun nonBlankEnvironmentVariable(name: String) =
     }
 
 val requestedLoaders = csvProperty("moemusic.publish.loaders", "fabric,forge,neoforge")
-val requestedDestinations = csvProperty("moemusic.publish.destinations", "github,modrinth,curseforge")
+val requestedDestinations = csvProperty("moemusic.publish.destinations", "github,modrinth")
 val publishesExternalKotlinForForge =
     libsCatalog.findLibrary("kotlin-forge").isPresent || libsCatalog.findLibrary("kotlin-neoforge").isPresent
 
