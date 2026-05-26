@@ -12,6 +12,7 @@ import org.lolicode.moemusic.platform.network.NetworkSetup.startServer
 import org.lolicode.moemusic.platform.player.MinecraftUser
 import org.lolicode.moemusic.platform.player.MinecraftUserRegistry
 import org.lolicode.moemusic.platform.runtime.MoePlatform
+import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import java.util.UUID
 
@@ -22,6 +23,8 @@ import java.util.UUID
  * module invoke [startServer] / [handleDisconnect] from its own lifecycle hooks.
  */
 object NetworkSetup {
+
+    private val logger = LoggerFactory.getLogger(NetworkSetup::class.java)
 
     lateinit var channel: BadPacketsNetworkChannel
         private set
@@ -57,6 +60,13 @@ object NetworkSetup {
      */
     fun handleDisconnect(userId: UUID) {
         val removed = UserSessionRegistry.disconnect(userId) ?: return
+        logger.info(
+            "MoeMusic client session disconnected: user={} id={} participation={} locale={}",
+            removed.user.displayName,
+            userId,
+            removed.participation,
+            removed.locale,
+        )
         if (removed.participation == UserSessionRegistry.Participation.ACTIVE) {
             VoteManager.onUserLeave(userId)
             if (UserSessionRegistry.activeCount() == 0) {
@@ -70,6 +80,12 @@ object NetworkSetup {
         if (session.participation != UserSessionRegistry.Participation.ACTIVE) return
 
         UserSessionRegistry.standby(userId)
+        logger.info(
+            "MoeMusic client left active playback audience: user={} id={} locale={}",
+            session.user.displayName,
+            userId,
+            session.locale,
+        )
         VoteManager.onUserLeave(userId)
         if (UserSessionRegistry.activeCount() == 0) {
             MoePlatform.onNativeAudienceUnavailable()
