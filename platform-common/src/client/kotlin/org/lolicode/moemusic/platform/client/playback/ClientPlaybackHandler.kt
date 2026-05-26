@@ -176,6 +176,10 @@ object ClientPlaybackHandler {
     @Volatile
     private var serverSessionAccepted: Boolean = false
 
+    @Volatile
+    var lastServerWelcomeRejection: ServerWelcomeRejection? = null
+        private set
+
     /** The most recent [QueueResponse] received from the server. Null until a queue request is made. */
     @Volatile
     var lastQueueResponse: QueueResponse? = null
@@ -273,6 +277,7 @@ object ClientPlaybackHandler {
         return ClientPlaybackAvailability.availabilityIssue(
             hasConnection = mc.connection != null,
             serverHandshakeMissing = isServerHandshakeMissing(),
+            serverHandshakeRejected = lastServerWelcomeRejection != null,
         )
     }
 
@@ -439,10 +444,16 @@ object ClientPlaybackHandler {
         serverHandshakeReceived = true
         serverSessionAccepted = msg.accepted
         if (!msg.accepted) {
-            val failure = msg.failure.ifBlank {
-                "MoeMusic server rejected the client handshake (server protocol ${msg.server_protocol_version})."
-            }
-            logger.warn("ServerWelcome rejected: {}", failure)
+            val rejection = serverWelcomeRejection(msg)
+            lastServerWelcomeRejection = rejection
+            val failure = renderServerWelcomeRejection(rejection)
+            logger.warn(
+                "ServerWelcome rejected: reason={} clientProtocol={} serverProtocol={} detail='{}'",
+                rejection.reason,
+                rejection.clientProtocolVersion,
+                rejection.serverProtocolVersion,
+                rejection.detail.orEmpty(),
+            )
             sourceCatalog = null
             playbackRegistrationActive = false
             ClientNetworkSetup.stopSyncLoop()
@@ -453,13 +464,14 @@ object ClientPlaybackHandler {
             minecraft.execute {
                 showPersistentRuntimeWarning(
                     minecraft,
-                    McText.translatable("screen.moemusic.playback.toast.title"),
+                    McText.translatable("screen.moemusic.unavailable.rejected.title"),
                     McText.literal(failure),
                 )
             }
             guiListener?.onSearchSourcesChanged()
             return
         }
+        lastServerWelcomeRejection = null
 
         sourceCatalog = SearchSourceCatalog(
             sources = msg.sources.map { info ->
@@ -646,6 +658,7 @@ object ClientPlaybackHandler {
         handshakeRequestedAtNanos = now
         serverHandshakeReceived = false
         serverSessionAccepted = false
+        lastServerWelcomeRejection = null
         sourceCatalog = null
         val msg = ClientHandshake(
             locale = locale,
@@ -915,6 +928,7 @@ object ClientPlaybackHandler {
         handshakeRequestedAtNanos = 0L
         serverHandshakeReceived = false
         serverSessionAccepted = false
+        lastServerWelcomeRejection = null
         // Search cache is intentionally kept — the GUI may restore recent results across reconnects.
     }
 
@@ -1334,7 +1348,11 @@ object ClientPlaybackHandler {
             throw ClientRequestException("MoeMusic server handshake has not completed yet.")
         }
         if (!serverSessionAccepted) {
-            throw ClientRequestException("MoeMusic server rejected this client session.")
+            val rejection = lastServerWelcomeRejection
+            throw ClientRequestException(
+                if (rejection != null) renderServerWelcomeRejection(rejection)
+                else renderLocalized(LocalizedText.key("screen.moemusic.unavailable.rejected.body"))
+            )
         }
     }
 
@@ -1356,6 +1374,28 @@ object ClientPlaybackHandler {
         val id = Identifier.fromNamespaceAndPath(packetId.namespace, packetId.path)
         PacketSender.c2s().send(id, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
     }
+
+    private fun serverWelcomeRejection(msg: ServerWelcome): ServerWelcomeRejection =
+        ServerWelcomeRejection(
+            reason = when (msg.reject_reason) {
+                ServerWelcomeRejectReason.SERVER_WELCOME_REJECT_PROTOCOL_MISMATCH ->
+                    ServerWelcomeRejectionReason.PROTOCOL_MISMATCH
+                ServerWelcomeRejectReason.SERVER_WELCOME_REJECT_SERVER_ERROR ->
+                    ServerWelcomeRejectionReason.SERVER_ERROR
+                ServerWelcomeRejectReason.SERVER_WELCOME_REJECT_UNSPECIFIED ->
+                    if (msg.server_protocol_version != 0 && msg.server_protocol_version != clientProtocolVersion) {
+                        ServerWelcomeRejectionReason.PROTOCOL_MISMATCH
+                    } else {
+                        ServerWelcomeRejectionReason.UNKNOWN
+                    }
+            },
+            clientProtocolVersion = clientProtocolVersion,
+            serverProtocolVersion = msg.server_protocol_version,
+            detail = msg.failure.ifBlank { null },
+        )
+
+    private fun renderServerWelcomeRejection(rejection: ServerWelcomeRejection): String =
+        renderLocalized(rejection.toLocalizedText())
 
     private fun renderLocalized(text: LocalizedText): String =
         ClientLocalization.render(text)

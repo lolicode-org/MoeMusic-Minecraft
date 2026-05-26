@@ -37,6 +37,8 @@ internal object ClientPlaybackServiceImpl : IClientPlaybackService {
             null -> null
             org.lolicode.moemusic.clientcore.playback.AvailabilityIssue.SERVER_MISSING ->
                 ClientAvailabilityIssue.SERVER_MISSING
+            org.lolicode.moemusic.clientcore.playback.AvailabilityIssue.SERVER_REJECTED ->
+                ClientAvailabilityIssue.SERVER_MISSING
         }
 
     override val configuredVolumePercent: Int
