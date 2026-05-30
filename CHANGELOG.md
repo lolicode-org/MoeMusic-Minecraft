@@ -1,3 +1,7 @@
+## 2026-05-30 (v1.2.1)
+- Fix the issue where music cannot be played when the MimeType or file extension provided by the music platform is incorrect.
+- 修复了当音乐平台提供的 MimeType 或文件拓展名不正确时，无法播放音乐的问题。
+
 ## 2026-05-26 (v1.2.0)
 
 - Fix the incorrect location of the instance lock file used in single-instance mode on Linux platform, which caused the instance lock to fail.
