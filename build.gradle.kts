@@ -54,6 +54,20 @@ tasks.named<ShadowJar>("shadowJar") {
     archiveClassifier.set("")
     mergeServiceFiles()
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+    exclude(
+        "natives/android-aarch64/**",
+        "natives/android-armhf/**",
+        "natives/android-x86/**",
+        "natives/android-x86-64/**",
+        "natives/linux-aarch32/**",
+        "natives/linux-arm/**",
+        "natives/linux-armhf/**",
+        "natives/linux-musl-aarch64/**",
+        "natives/linux-musl-x86-64/**",
+        "natives/linux-x86/**",
+        "natives/win-aarch64/**",
+        "natives/win-x86/**",
+    )
     dependencies {
         exclude(dependency("org.jetbrains.kotlin:kotlin-stdlib:.*"))
         exclude(dependency("org.jetbrains.kotlinx:kotlinx-coroutines-.*:.*"))
