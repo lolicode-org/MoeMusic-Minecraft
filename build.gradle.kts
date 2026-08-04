@@ -59,6 +59,9 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.spigot.api) {
+        version { require(spigotApiVersion.get()) }
+    }
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

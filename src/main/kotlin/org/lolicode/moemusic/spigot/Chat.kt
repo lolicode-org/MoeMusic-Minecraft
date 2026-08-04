@@ -35,7 +35,7 @@ object Chat {
     }
 
     fun message(sender: CommandSender, text: String) {
-        message(sender, TextComponent.fromLegacyText(text).toList())
+        message(sender, legacy(text))
     }
 
     fun message(sender: CommandSender, components: Iterable<BaseComponent>) {
@@ -43,22 +43,52 @@ object Chat {
         if (parts.isNotEmpty()) sender.spigot().sendMessage(*parts.toTypedArray())
     }
 
+    internal fun multiline(sender: CommandSender, lines: Iterable<Iterable<BaseComponent>>) {
+        // Spigot serializes each call as one chat packet, which is capped at 32767 bytes.
+        lines.forEach { line -> message(sender, line) }
+    }
+
+    internal fun legacy(text: String): List<BaseComponent> = TextComponent.fromLegacyText(text).toList()
+
+    internal fun hoverable(
+        sender: CommandSender,
+        text: String,
+        hover: LocalizedText,
+        tone: SpigotChatFormatting.Tone = SpigotChatFormatting.Tone.NEUTRAL,
+    ): List<BaseComponent> = interactive(sender, text, null, hover, tone)
+
+    internal fun action(
+        sender: CommandSender,
+        label: String,
+        labelColor: String,
+        command: String,
+        hover: LocalizedText,
+    ): List<BaseComponent> = clickable(sender, "§8[$labelColor$label§8]", command, hover)
+
     fun clickable(
         sender: CommandSender,
         text: String,
         command: String,
         hover: LocalizedText? = null,
+    ): List<BaseComponent> = interactive(sender, text, command, hover)
+
+    private fun interactive(
+        sender: CommandSender,
+        text: String,
+        command: String?,
+        hover: LocalizedText?,
+        tone: SpigotChatFormatting.Tone = SpigotChatFormatting.Tone.NEUTRAL,
     ): List<BaseComponent> {
         val hoverEvent = hover?.let {
             HoverEvent(
                 HoverEvent.Action.SHOW_TEXT,
                 TextComponent.fromLegacyText(
-                    SpigotChatFormatting.render(locale(sender), it, SpigotChatFormatting.Tone.NEUTRAL),
+                    SpigotChatFormatting.render(locale(sender), it, tone),
                 ),
             )
         }
         return TextComponent.fromLegacyText(text).onEach { component ->
-            component.clickEvent = ClickEvent(ClickEvent.Action.RUN_COMMAND, command)
+            component.clickEvent = command?.let { ClickEvent(ClickEvent.Action.RUN_COMMAND, it) }
             component.hoverEvent = hoverEvent
         }.toList()
     }
