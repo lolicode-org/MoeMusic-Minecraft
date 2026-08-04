@@ -11,6 +11,7 @@ kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 slf4j = "2.0.18"
 shadow = "9.4.2"
+mod-publish-plugin = "2.2.0"
 
 # Tests.
 junit = "6.1.0"
@@ -18,6 +19,7 @@ junit = "6.1.0"
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
+mod-publish = { id = "me.modmuss50.mod-publish-plugin", version.ref = "mod-publish-plugin" }
 
 [libraries]
 spigot-api = { module = "org.spigotmc:spigot-api", version.ref = "spigot-api" }

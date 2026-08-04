@@ -1,0 +1,95 @@
+name: publish spigot
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Release channel'
+        type: choice
+        options: [stable, beta, alpha]
+        required: true
+        default: 'stable'
+      changelog_branch:
+        description: 'Branch to read CHANGELOG.md from'
+        type: string
+        required: false
+        default: 'changelog'
+      publish_curseforge:
+        description: 'Publish to CurseForge'
+        type: boolean
+        required: false
+        default: true
+      dry_run:
+        description: 'Build and validate publish tasks without uploading'
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+
+      - name: setup gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+          CHANGELOG_BRANCH: ${{ inputs.changelog_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          selected_destinations=("github" "modrinth")
+          if [[ "${{ inputs.publish_curseforge }}" == "true" ]]; then
+            selected_destinations+=("curseforge")
+          fi
+          destinations="$(IFS=,; echo "${selected_destinations[*]}")"
+
+          chmod +x ./gradlew
+          commitish="$(git rev-parse HEAD)"
+          changelog_branch="$CHANGELOG_BRANCH"
+          changelog_file="$RUNNER_TEMP/moemusic-release-changelog.md"
+
+          if [[ -z "$changelog_branch" ]]; then
+            echo "changelog_branch must not be empty." >&2
+            exit 1
+          fi
+          if ! git check-ref-format "refs/heads/$changelog_branch" >/dev/null; then
+            echo "Invalid changelog branch: $changelog_branch" >&2
+            exit 1
+          fi
+
+          echo "Using CHANGELOG.md from $changelog_branch."
+          git fetch --no-tags origin "+refs/heads/$changelog_branch:refs/remotes/origin/$changelog_branch"
+          git show "refs/remotes/origin/$changelog_branch:CHANGELOG.md" > "$changelog_file"
+
+          ./gradlew \
+            -Pmoemusic.publish.destinations="$destinations" \
+            -Pmoemusic.publish.type="${{ inputs.version_type }}" \
+            -Pmoemusic.publish.commitish="$commitish" \
+            -Pmoemusic.publish.changelogFile="$changelog_file" \
+            -Pmoemusic.publish.dryRun="${{ inputs.dry_run }}" \
+            build publishMods --stacktrace

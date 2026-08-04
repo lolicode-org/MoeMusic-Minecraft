@@ -1,0 +1,42 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+
+      - name: setup gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: false
+
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: build spigot jar
+        run: ./gradlew build --stacktrace
+
+      - name: upload spigot jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: spigot
+          archive: false
+          path: build/libs/*-spigot-*.jar
