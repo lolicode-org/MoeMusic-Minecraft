@@ -3,7 +3,14 @@ version: '${version}'
 main: org.lolicode.moemusic.spigot.MoeMusicPlugin
 api-version: '1.18'
 description: Server-side MoeMusic bridge for Spigot 1.18.2 and newer
-authors: [Lolicode]
+authors: [KoishiMoe]
+libraries:
+  - org.jetbrains.kotlin:kotlin-stdlib:${kotlinRuntimeVersion}
+  - org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:${coroutinesVersion}
+  - org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:${serializationVersion}
+  - org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:${serializationVersion}
+  - org.slf4j:slf4j-api:${slf4jVersion}
+  - org.slf4j:slf4j-jdk14:${slf4jVersion}
 commands:
   music:
     description: Controls MoeMusic playback and queue

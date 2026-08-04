@@ -10,6 +10,11 @@ need the matching MoeMusic client mod to receive synchronized playback.
 3. Start the server once, then place music-source plugin JARs in
    `plugins/MoeMusic/plugins/`.
 
+Spigot downloads and caches the Kotlin, kotlinx, and SLF4J runtime libraries
+declared in `plugin.yml` from Maven Central on first startup. The first startup
+therefore needs network access, unless the server's library cache is already
+populated.
+
 Configuration is generated under `plugins/MoeMusic/`. Standard Bukkit
 permission nodes are used when explicitly configured; otherwise MoeMusic's
 configured permission levels fall back to everyone for level 0 and operators
