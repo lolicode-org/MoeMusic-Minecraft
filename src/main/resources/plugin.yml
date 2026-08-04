@@ -1,0 +1,10 @@
+name: MoeMusic
+version: '${version}'
+main: org.lolicode.moemusic.spigot.MoeMusicPlugin
+api-version: '1.18'
+description: Server-side MoeMusic bridge for Spigot 1.18.2 and newer
+authors: [Lolicode]
+commands:
+  music:
+    description: Controls MoeMusic playback and queue
+    usage: /music help
