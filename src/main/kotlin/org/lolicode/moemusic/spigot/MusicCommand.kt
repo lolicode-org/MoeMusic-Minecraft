@@ -22,6 +22,7 @@ import org.lolicode.moemusic.api.model.TrackAddMode
 import org.lolicode.moemusic.api.model.TrackAddResult
 import org.lolicode.moemusic.api.model.TrackInfo
 import org.lolicode.moemusic.api.model.artistDisplay
+import org.lolicode.moemusic.api.model.isDirectTrack
 import org.lolicode.moemusic.api.service.IdentifierSubmitOutcome
 import org.lolicode.moemusic.api.service.PlaybackAction
 import org.lolicode.moemusic.api.service.QueueRemoveResult
@@ -167,8 +168,18 @@ class MusicCommand(
         val queued = ServerRuntimeCoordinator.queue.userQueueSnapshot()
         if (current == null && queued.isEmpty()) return Chat.success(sender, LocalizedText.key("action.moemusic.queue.empty"))
         Chat.success(sender, LocalizedText.key("action.moemusic.queue.header", queued.size + if (current == null) 0 else 1))
-        current?.let { sender.sendMessage("  Now: ${trackLine(it)}") }
-        queued.forEachIndexed { index, track -> sender.sendMessage("  ${index + 1}. ${trackLine(track)}") }
+        current?.let { Chat.message(sender, "  §6Now: §b${trackLine(it)}") }
+        queued.forEachIndexed { index, track ->
+            Chat.message(
+                sender,
+                Chat.clickable(
+                    sender,
+                    "  §e${index + 1}. §b${trackLine(track)} §c[✕]",
+                    "/music remove ${index + 1}",
+                    LocalizedText.key("action.moemusic.queue.remove_hover", track.title.ifBlank { track.id }),
+                ),
+            )
+        }
     }
 
     private fun remove(sender: CommandSender, args: List<String>) {
@@ -210,12 +221,26 @@ class MusicCommand(
                         Chat.success(sender, LocalizedText.key("action.moemusic.search.header", result.entries.size))
                         result.entries.forEachIndexed { index, entry ->
                             val source = entry.sourceId ?: result.sourceId
-                            sender.sendMessage("  ${index + 1}. ${selectionLine(entry)}")
-                            sender.sendMessage("     /music select ${quote(source)} ${quote(entry.selectionId)}")
+                            val command = selectCommand(source, entry.selectionId)
+                            val hoverKey = if (entry.isDirectTrack) {
+                                "action.moemusic.search.click_to_queue"
+                            } else {
+                                "action.moemusic.search.click_to_select"
+                            }
+                            Chat.message(
+                                sender,
+                                Chat.clickable(
+                                    sender,
+                                    "  §e${index + 1}. §b${selectionLine(entry)}",
+                                    command,
+                                    LocalizedText.key(hoverKey, entry.title.ifBlank { entry.selectionId }),
+                                ),
+                            )
+                            Chat.message(sender, Chat.clickable(sender, "     §7$command", command))
                         }
                     }
                     if (parsed.page > 1 || result.hasMore) {
-                        sender.sendMessage("  Page ${parsed.page}${if (result.total > 0) "/${(result.total + pageSize - 1) / pageSize}" else ""}")
+                        Chat.message(sender, "  §8Page §7${parsed.page}${if (result.total > 0) "/${(result.total + pageSize - 1) / pageSize}" else ""}")
                     }
                 }
             } catch (error: Exception) {
@@ -301,8 +326,22 @@ class MusicCommand(
     private fun choices(sender: CommandSender, entries: List<SelectionEntry>, sourceId: String) {
         Chat.success(sender, LocalizedText.key("action.moemusic.selection.choose_prompt"))
         entries.forEachIndexed { index, entry ->
-            sender.sendMessage("  ${index + 1}. ${selectionLine(entry)}")
-            sender.sendMessage("     /music select ${quote(entry.sourceId ?: sourceId)} ${quote(entry.selectionId)}")
+            val command = selectCommand(entry.sourceId ?: sourceId, entry.selectionId)
+            val hoverKey = if (entry.isDirectTrack) {
+                "action.moemusic.search.click_to_queue"
+            } else {
+                "action.moemusic.search.click_to_select"
+            }
+            Chat.message(
+                sender,
+                Chat.clickable(
+                    sender,
+                    "  §e${index + 1}. §b${selectionLine(entry)}",
+                    command,
+                    LocalizedText.key(hoverKey, entry.title.ifBlank { entry.selectionId }),
+                ),
+            )
+            Chat.message(sender, Chat.clickable(sender, "     §7$command", command))
         }
     }
 
@@ -354,6 +393,9 @@ class MusicCommand(
 
     private fun selectionLine(entry: SelectionEntry): String =
         "${entry.title.ifBlank { entry.selectionId }}${entry.artistDisplay.takeIf(String::isNotBlank)?.let { " - $it" }.orEmpty()}"
+
+    private fun selectCommand(sourceId: String, selectionId: String): String =
+        "/music select ${quote(sourceId)} ${quote(selectionId)}"
 
     private fun sourceIds(searchableOnly: Boolean): List<String> = PluginManager.musicSourceSnapshot()
         .filter { !searchableOnly || it is SearchableMusicSource }
