@@ -2,18 +2,18 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm") version "2.4.0"
-    id("com.gradleup.shadow") version "9.4.2"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.shadow)
 }
 
 group = "org.lolicode.moemusic"
-version = "1.3.0"
-val spigotApiVersion = providers.gradleProperty("spigotApiVersion").orElse("1.18.2-R0.1-SNAPSHOT")
+version = libs.versions.moemusic.spigot.get()
+val spigotApiVersion = providers.gradleProperty("spigotApiVersion").orElse(libs.versions.spigot.api)
 val pluginVersion = version.toString()
-val kotlinRuntimeVersion = "2.4.0"
-val coroutinesVersion = "1.11.0"
-val serializationVersion = "1.11.0"
-val slf4jVersion = "2.0.18"
+val kotlinRuntimeVersion = libs.versions.kotlin.get()
+val coroutinesVersion = libs.versions.kotlinx.coroutines.get()
+val serializationVersion = libs.versions.kotlinx.serialization.get()
+val slf4jVersion = libs.versions.slf4j.get()
 
 kotlin {
     compilerOptions.jvmTarget = JvmTarget.JVM_17
@@ -25,15 +25,17 @@ java {
 }
 
 dependencies {
-    compileOnly("org.spigotmc:spigot-api:${spigotApiVersion.get()}")
-    implementation("org.lolicode.moemusic:api:2.1.1")
-    implementation("org.lolicode.moemusic:core:1.3.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
-    runtimeOnly("org.slf4j:slf4j-jdk14:$slf4jVersion")
+    compileOnly(libs.spigot.api) {
+        version { require(spigotApiVersion.get()) }
+    }
+    implementation(libs.moemusic.api)
+    implementation(libs.moemusic.core)
+    implementation(libs.kotlinx.coroutines.core)
+    runtimeOnly(libs.slf4j.jdk14)
 
     testImplementation(kotlin("test"))
-    testImplementation("org.junit.jupiter:junit-jupiter:6.1.0")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.0")
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.processResources {
