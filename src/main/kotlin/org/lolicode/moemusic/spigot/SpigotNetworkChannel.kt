@@ -16,6 +16,7 @@ import org.lolicode.moemusic.core.runtime.ServerRuntimeCoordinator
 import org.lolicode.moemusic.core.session.UserSessionRegistry
 import org.lolicode.moemusic.core.transport.NetworkChannel
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
 class SpigotNetworkChannel(
@@ -24,6 +25,7 @@ class SpigotNetworkChannel(
     private val registry = PacketRegistry()
     private val byChannel = PacketIds.ALL.associateBy(PacketId::toChannelKey)
     private val pendingOversizedTrackSkip = AtomicReference<String?>()
+    private val unregisteredChannelWarnings = ConcurrentHashMap.newKeySet<String>()
     private val maxPayloadSize: Int = runCatching {
         Messenger::class.java.getField("MAX_MESSAGE_SIZE").getInt(null)
     }.getOrElse {
@@ -41,6 +43,10 @@ class SpigotNetworkChannel(
     fun unregister() {
         plugin.server.messenger.unregisterIncomingPluginChannel(plugin)
         plugin.server.messenger.unregisterOutgoingPluginChannel(plugin)
+    }
+
+    fun forgetPlayer(userId: UUID) {
+        unregisteredChannelWarnings.removeIf { it.startsWith("$userId:") }
     }
 
     override fun onPluginMessageReceived(channel: String, player: Player, message: ByteArray) {
@@ -77,8 +83,17 @@ class SpigotNetworkChannel(
     private fun send(userId: UUID, packetId: PacketId, payload: ByteArray) {
         val task = Runnable {
             runCatching {
-                Bukkit.getPlayer(userId)?.takeIf(Player::isOnline)
-                    ?.sendPluginMessage(plugin, packetId.toChannelKey(), payload)
+                Bukkit.getPlayer(userId)?.takeIf(Player::isOnline)?.let { player ->
+                    val channel = packetId.toChannelKey()
+                    if (channel in player.listeningPluginChannels) {
+                        player.sendPluginMessage(plugin, channel, payload)
+                    } else if (unregisteredChannelWarnings.add("$userId:$channel")) {
+                        plugin.logger.warning(
+                            "Client ${player.name} did not register $channel; dropping the MoeMusic packet. " +
+                                "Update the MoeMusic client for this Minecraft version.",
+                        )
+                    }
+                }
             }.onFailure { error ->
                 plugin.logger.severe("Failed to send MoeMusic packet $packetId to $userId: ${error.message}")
             }

@@ -65,6 +65,7 @@ class MoeMusicPlugin : JavaPlugin(), Listener {
 
     @EventHandler
     fun onQuit(event: PlayerQuitEvent) {
+        channel.forgetPlayer(event.player.uniqueId)
         ServerConnectionEventsDispatcher.disconnected(SpigotUser.snapshot(event.player))
         handleDisconnect(event.player.uniqueId)
     }
