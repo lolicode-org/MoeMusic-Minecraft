@@ -3,7 +3,8 @@
   "package": "org.lolicode.moemusic.client.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "MixinSoundEngine"
+    "MixinSoundEngine",
+    "MixinBadPacketsAbstractPacketHandler"
   ],
   "injectors": {
     "defaultRequire": 1
