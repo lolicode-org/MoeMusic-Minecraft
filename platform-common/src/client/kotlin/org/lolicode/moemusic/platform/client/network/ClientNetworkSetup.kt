@@ -7,8 +7,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import lol.bai.badpackets.api.PacketSender
 import lol.bai.badpackets.api.S2CPacketReceiver
 import net.minecraft.resources.ResourceLocation
+import org.lolicode.moemusic.client.mixin.MixinBadPacketsAbstractPacketHandler
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.proto.ContentFilterActionResponse
@@ -122,6 +124,32 @@ object ClientNetworkSetup {
         }
 
         logger.debug("ClientNetworkSetup: channels declared and S→C receivers registered.")
+    }
+
+    /** Advertise MoeMusic's S→C channels through vanilla plugin-channel registration. */
+    fun advertiseClientChannels() {
+        val channels = listOf(
+            PacketIds.TRACK_SUBMIT_RESPONSE,
+            PacketIds.IDENTIFIER_SUBMIT_RESPONSE,
+            PacketIds.SELECTION_SUBMIT_RESPONSE,
+            PacketIds.SYNC_RESPONSE,
+            PacketIds.SERVER_WELCOME,
+            PacketIds.PLAYBACK_SNAPSHOT_PUSH,
+            PacketIds.STATE_UPDATE,
+            PacketIds.SEARCH_RESPONSE,
+            PacketIds.QUEUE_RESPONSE,
+            PacketIds.UI_BOOTSTRAP_RESPONSE,
+            PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.PLAYBACK_CONTROL_RESPONSE,
+            PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
+        ).map { ResourceLocation(it.namespace, it.path) }.toSet()
+
+        runCatching {
+            (PacketSender.c2s() as MixinBadPacketsAbstractPacketHandler)
+                .moemusicSendVanillaChannelRegisterPacket(channels)
+        }.onFailure { error ->
+            logger.warn("Could not advertise MoeMusic plugin channels: {}", error.message)
+        }
     }
 
     /**
