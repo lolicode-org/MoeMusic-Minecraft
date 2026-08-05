@@ -53,6 +53,7 @@ object MoeMusicClient : ClientModInitializer {
         // On JOIN: send the initial client hello/state, restart any needed sync loop,
         // and show the shortcut tip once.
         ClientPlayConnectionEvents.JOIN.register { _, _, mc ->
+            ClientNetworkSetup.advertiseClientChannels()
             ClientShortcutController.onConnectionJoined(mc, keyBindings)
         }
 

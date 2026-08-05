@@ -111,6 +111,7 @@ object MoeMusicClient {
     }
 
     private fun onClientLoggedIn(event: ClientPlayerNetworkEvent.LoggingIn) {
+        ClientNetworkSetup.advertiseClientChannels()
         val bindings = keyBindings ?: return
         ClientShortcutController.onConnectionJoined(Minecraft.getInstance(), bindings)
     }
