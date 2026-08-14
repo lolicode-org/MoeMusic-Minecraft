@@ -5,6 +5,7 @@ import org.bukkit.ChatColor
 import org.bukkit.entity.Player
 import org.bukkit.plugin.messaging.Messenger
 import org.bukkit.plugin.messaging.PluginMessageListener
+import org.lolicode.moemusic.api.LocalizedText
 import org.lolicode.moemusic.api.MoeMusicUser
 import org.lolicode.moemusic.core.i18n.Localization
 import org.lolicode.moemusic.core.network.ServerPacketHandlers
@@ -14,6 +15,7 @@ import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.PacketRegistry
 import org.lolicode.moemusic.core.runtime.ServerRuntimeCoordinator
 import org.lolicode.moemusic.core.session.UserSessionRegistry
+import org.lolicode.moemusic.core.transport.FramedPayloadCodec
 import org.lolicode.moemusic.core.transport.NetworkChannel
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -60,6 +62,25 @@ class SpigotNetworkChannel(
 
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
         if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) return
+        if (UserSessionRegistry.supportsFraming(user.id)) {
+            val frames = try {
+                FramedPayloadCodec.encode(payload)
+            } catch (e: Exception) {
+                plugin.logger.severe(
+                    "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                )
+                return
+            }
+            if (frames.any { it.size > maxPayloadSize }) {
+                plugin.logger.severe(
+                    "Dropping MoeMusic packet $packetId: framed payload chunk exceeds Spigot's " +
+                        "$maxPayloadSize-byte plugin-message limit.",
+                )
+                return
+            }
+            frames.forEach { frame -> send(user.id, packetId, frame) }
+            return
+        }
         when (val result = SpigotPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
             is SpigotPayloadPolicy.Result.Send -> {
                 logLyricsStripped(packetId, result)
@@ -71,12 +92,43 @@ class SpigotNetworkChannel(
 
     override fun sendToAllClients(packetId: PacketId, payload: ByteArray) {
         val users = SpigotUsers.allActive()
-        when (val result = SpigotPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
-            is SpigotPayloadPolicy.Result.Send -> {
-                logLyricsStripped(packetId, result)
-                users.forEach { send(it.id, packetId, result.payload) }
+        val (modernUsers, legacyUsers) = users.partition { UserSessionRegistry.supportsFraming(it.id) }
+
+        if (modernUsers.isNotEmpty()) {
+            val frames = try {
+                FramedPayloadCodec.encode(payload)
+            } catch (e: Exception) {
+                plugin.logger.severe(
+                    "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                )
+                null
             }
-            is SpigotPayloadPolicy.Result.Oversized -> handleOversized(packetId, result, users.map { it.id })
+            if (frames != null) {
+                if (frames.any { it.size > maxPayloadSize }) {
+                    // Note: This drops the broadcast without triggering the Oversized track skip fallback.
+                    // However, FramedPayloadCodec strictly bounds chunk frames to ~30 KB. This branch will 
+                    // only ever be hit if a custom Spigot server forces maxPayloadSize below ~30 KB, 
+                    // in which case the plugin would be fundamentally unsupportable anyway.
+                    plugin.logger.severe(
+                        "Dropping MoeMusic packet $packetId: framed payload chunk exceeds Spigot's " +
+                            "$maxPayloadSize-byte plugin-message limit.",
+                    )
+                } else {
+                    modernUsers.forEach { user ->
+                        frames.forEach { frame -> send(user.id, packetId, frame) }
+                    }
+                }
+            }
+        }
+
+        if (legacyUsers.isNotEmpty()) {
+            when (val result = SpigotPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
+                is SpigotPayloadPolicy.Result.Send -> {
+                    logLyricsStripped(packetId, result)
+                    legacyUsers.forEach { send(it.id, packetId, result.payload) }
+                }
+                is SpigotPayloadPolicy.Result.Oversized -> handleOversized(packetId, result, legacyUsers.map { it.id })
+            }
         }
     }
 
@@ -147,22 +199,31 @@ class SpigotNetworkChannel(
     }
 
     private inner class SessionBridgeImpl : ServerPacketSessionBridge {
-        override fun activate(sender: MoeMusicUser, locale: String): MoeMusicUser {
+        override fun activate(sender: MoeMusicUser, locale: String, protocolVersion: Int): MoeMusicUser {
             val player = Bukkit.getPlayer(sender.id) ?: return sender.also {
-                UserSessionRegistry.activate(it, locale)
+                UserSessionRegistry.activate(it, locale, protocolVersion)
             }
-            return SpigotUsers.activate(player, locale)
+            return SpigotUsers.activate(player, locale, protocolVersion)
         }
 
-        override fun standby(sender: MoeMusicUser, locale: String): MoeMusicUser {
+        override fun standby(sender: MoeMusicUser, locale: String, protocolVersion: Int): MoeMusicUser {
             val player = Bukkit.getPlayer(sender.id) ?: return sender.also {
-                UserSessionRegistry.registerStandby(it, locale)
+                UserSessionRegistry.registerStandby(it, locale, protocolVersion)
             }
-            return SpigotUsers.standby(player, locale)
+            return SpigotUsers.standby(player, locale, protocolVersion)
         }
 
         override fun handleRegisteredClientLeave(userId: UUID) {
             plugin.handleRegisteredClientLeave(userId)
+        }
+
+        override fun notifyOutdatedClient(user: MoeMusicUser, clientProtocolVersion: Int) {
+            val message = LocalizedText.key("action.moemusic.protocol.outdated_client", clientProtocolVersion)
+            val text = Localization.render(user.locale, message)
+            val task = Runnable {
+                Bukkit.getPlayer(user.id)?.sendMessage("§7[MoeMusic] §f$text")
+            }
+            if (Bukkit.isPrimaryThread()) task.run() else if (plugin.isEnabled) plugin.server.scheduler.runTask(plugin, task)
         }
     }
 
