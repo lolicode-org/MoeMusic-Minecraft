@@ -1,11 +1,13 @@
 package org.lolicode.moemusic.platform.network
 
+import org.lolicode.moemusic.api.LocalizedText
 import org.lolicode.moemusic.api.MoeMusicUser
 import org.lolicode.moemusic.core.audio.LavaPlayerNativeBootstrap
 import org.lolicode.moemusic.core.network.ServerPacketHandlers
 import org.lolicode.moemusic.core.network.ServerPacketSessionBridge
 import org.lolicode.moemusic.core.protocol.PacketRegistry
 import org.lolicode.moemusic.core.session.UserSessionRegistry
+import org.lolicode.moemusic.platform.chat.LocalizedChatRenderer
 import org.lolicode.moemusic.platform.command.VoteManager
 import org.lolicode.moemusic.platform.network.NetworkSetup.handleDisconnect
 import org.lolicode.moemusic.platform.network.NetworkSetup.startServer
@@ -93,24 +95,32 @@ object NetworkSetup {
     }
 
     private object UserSessionBridge : ServerPacketSessionBridge {
-        override fun activate(sender: MoeMusicUser, locale: String): MoeMusicUser {
+        override fun activate(sender: MoeMusicUser, locale: String, protocolVersion: Int): MoeMusicUser {
             val entity = (sender as? MinecraftUser)?.entity()
                 ?: return sender.also {
-                    UserSessionRegistry.upsert(it, locale, UserSessionRegistry.Participation.ACTIVE)
+                    UserSessionRegistry.upsert(it, locale, UserSessionRegistry.Participation.ACTIVE, protocolVersion)
                 }
-            return MinecraftUserRegistry.onJoin(entity, locale)
+            return MinecraftUserRegistry.onJoin(entity, locale, protocolVersion)
         }
 
-        override fun standby(sender: MoeMusicUser, locale: String): MoeMusicUser {
+        override fun standby(sender: MoeMusicUser, locale: String, protocolVersion: Int): MoeMusicUser {
             val entity = (sender as? MinecraftUser)?.entity()
                 ?: return sender.also {
-                    UserSessionRegistry.upsert(it, locale, UserSessionRegistry.Participation.STANDBY)
+                    UserSessionRegistry.upsert(it, locale, UserSessionRegistry.Participation.STANDBY, protocolVersion)
                 }
-            return MinecraftUserRegistry.onStandby(entity, locale)
+            return MinecraftUserRegistry.onStandby(entity, locale, protocolVersion)
         }
 
         override fun handleRegisteredClientLeave(userId: UUID) {
             NetworkSetup.handleRegisteredClientLeave(userId)
+        }
+
+        override fun notifyOutdatedClient(user: MoeMusicUser, clientProtocolVersion: Int) {
+            val entity = (user as? MinecraftUser)?.entity() ?: return
+            val message = LocalizedText.key("action.moemusic.protocol.outdated_client", clientProtocolVersion)
+            entity.sendSystemMessage(
+                LocalizedChatRenderer.prefixed(user.locale, message, LocalizedChatRenderer.Tone.NEUTRAL)
+            )
         }
     }
 }
