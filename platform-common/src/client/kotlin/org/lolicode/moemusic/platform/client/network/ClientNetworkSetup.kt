@@ -11,20 +11,6 @@ import lol.bai.badpackets.api.S2CPacketReceiver
 import net.minecraft.resources.ResourceLocation
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
-import org.lolicode.moemusic.core.protocol.proto.ContentFilterActionResponse
-import org.lolicode.moemusic.core.protocol.proto.IdentifierSubmitResponse
-import org.lolicode.moemusic.core.protocol.proto.PlaybackSnapshotPush
-import org.lolicode.moemusic.core.protocol.proto.PlaybackControlResponse
-import org.lolicode.moemusic.core.protocol.proto.QueueRemoveResponse
-import org.lolicode.moemusic.core.protocol.proto.QueueResponse
-import org.lolicode.moemusic.core.protocol.proto.SearchResponse
-import org.lolicode.moemusic.core.protocol.proto.SelectionSubmitResponse
-import org.lolicode.moemusic.core.protocol.proto.ServerWelcome
-import org.lolicode.moemusic.core.protocol.proto.StateUpdate
-import org.lolicode.moemusic.core.protocol.proto.SyncRequest
-import org.lolicode.moemusic.core.protocol.proto.SyncResponse
-import org.lolicode.moemusic.core.protocol.proto.TrackSubmitResponse
-import org.lolicode.moemusic.core.protocol.proto.UiBootstrapResponse
 import org.lolicode.moemusic.platform.client.playback.ClientPlaybackHandler
 import org.slf4j.LoggerFactory
 import kotlin.time.Duration.Companion.milliseconds
@@ -56,69 +42,25 @@ object ClientNetworkSetup {
      */
     fun register() {
         // Register S→C receivers
-        registerReceiver(PacketIds.PLAYBACK_SNAPSHOT_PUSH) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handlePlaybackSnapshotPush(PlaybackSnapshotPush.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.STATE_UPDATE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleStateUpdate(StateUpdate.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.SYNC_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleSyncResponse(SyncResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.SERVER_WELCOME) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleServerWelcome(ServerWelcome.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.SEARCH_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleSearchResponse(SearchResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.TRACK_SUBMIT_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleTrackSubmitResponse(TrackSubmitResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.IDENTIFIER_SUBMIT_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleIdentifierSubmitResponse(IdentifierSubmitResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.SELECTION_SUBMIT_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleSelectionSubmitResponse(SelectionSubmitResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.QUEUE_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleQueueResponse(QueueResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.UI_BOOTSTRAP_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleUiBootstrapResponse(UiBootstrapResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.QUEUE_REMOVE_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleQueueRemoveResponse(QueueRemoveResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.PLAYBACK_CONTROL_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handlePlaybackControlResponse(PlaybackControlResponse.ADAPTER.decode(bytes))
-        }
-
-        registerReceiver(PacketIds.CONTENT_FILTER_ACTION_RESPONSE) { buf ->
-            val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
-            ClientPlaybackHandler.handleContentFilterActionResponse(ContentFilterActionResponse.ADAPTER.decode(bytes))
+        listOf(
+            PacketIds.TRACK_SUBMIT_RESPONSE,
+            PacketIds.IDENTIFIER_SUBMIT_RESPONSE,
+            PacketIds.SELECTION_SUBMIT_RESPONSE,
+            PacketIds.SYNC_RESPONSE,
+            PacketIds.SERVER_WELCOME,
+            PacketIds.PLAYBACK_SNAPSHOT_PUSH,
+            PacketIds.STATE_UPDATE,
+            PacketIds.SEARCH_RESPONSE,
+            PacketIds.QUEUE_RESPONSE,
+            PacketIds.UI_BOOTSTRAP_RESPONSE,
+            PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.PLAYBACK_CONTROL_RESPONSE,
+            PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
+        ).forEach { packetId ->
+            registerReceiver(packetId) { buf ->
+                val bytes = ByteArray(buf.readableBytes()).also { buf.readBytes(it) }
+                ClientPlaybackHandler.receiveFromServer(packetId, bytes)
+            }
         }
 
         logger.debug("ClientNetworkSetup: channels declared and S→C receivers registered.")
