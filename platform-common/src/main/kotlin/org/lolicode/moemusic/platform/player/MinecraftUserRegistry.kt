@@ -2,6 +2,7 @@ package org.lolicode.moemusic.platform.player
 
 import net.minecraft.server.level.ServerPlayer
 import org.lolicode.moemusic.core.i18n.Localization
+import org.lolicode.moemusic.core.protocol.MoeMusicProtocol
 import org.lolicode.moemusic.core.session.UserSessionRegistry
 import org.slf4j.LoggerFactory
 import java.util.UUID
@@ -13,15 +14,23 @@ object MinecraftUserRegistry {
 
     private val logger = LoggerFactory.getLogger(MinecraftUserRegistry::class.java)
 
-    fun onJoin(entity: ServerPlayer, locale: String = Localization.resolveLocale(null)): MinecraftUser {
-        val user = upsert(entity, locale, UserSessionRegistry.Participation.ACTIVE)
-        logger.debug("MinecraftUserRegistry: {} joined ({}) locale={}", user.displayName, user.id, user.locale)
+    fun onJoin(
+        entity: ServerPlayer,
+        locale: String = Localization.resolveLocale(null),
+        protocolVersion: Int = MoeMusicProtocol.VERSION,
+    ): MinecraftUser {
+        val user = upsert(entity, locale, UserSessionRegistry.Participation.ACTIVE, protocolVersion)
+        logger.debug("MinecraftUserRegistry: {} joined ({}) locale={} protocol={}", user.displayName, user.id, user.locale, protocolVersion)
         return user
     }
 
-    fun onStandby(entity: ServerPlayer, locale: String = Localization.resolveLocale(null)): MinecraftUser {
-        val user = upsert(entity, locale, UserSessionRegistry.Participation.STANDBY)
-        logger.debug("MinecraftUserRegistry: {} standby ({}) locale={}", user.displayName, user.id, user.locale)
+    fun onStandby(
+        entity: ServerPlayer,
+        locale: String = Localization.resolveLocale(null),
+        protocolVersion: Int = MoeMusicProtocol.VERSION,
+    ): MinecraftUser {
+        val user = upsert(entity, locale, UserSessionRegistry.Participation.STANDBY, protocolVersion)
+        logger.debug("MinecraftUserRegistry: {} standby ({}) locale={} protocol={}", user.displayName, user.id, user.locale, protocolVersion)
         return user
     }
 
@@ -29,9 +38,10 @@ object MinecraftUserRegistry {
         entity: ServerPlayer,
         locale: String,
         participation: UserSessionRegistry.Participation,
+        protocolVersion: Int = MoeMusicProtocol.VERSION,
     ): MinecraftUser {
         val user = snapshot(entity, locale)
-        UserSessionRegistry.upsert(user, locale, participation)
+        UserSessionRegistry.upsert(user, locale, participation, protocolVersion)
         return user
     }
 
