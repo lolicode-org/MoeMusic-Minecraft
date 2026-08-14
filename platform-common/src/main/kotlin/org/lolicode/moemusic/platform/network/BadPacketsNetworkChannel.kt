@@ -6,6 +6,7 @@ import lol.bai.badpackets.api.play.PlayPackets
 import net.minecraft.network.FriendlyByteBuf
 import net.minecraft.resources.Identifier
 import org.lolicode.moemusic.api.MoeMusicUser
+import org.lolicode.moemusic.core.transport.FramedPayloadCodec
 import org.lolicode.moemusic.core.transport.NetworkChannel
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
@@ -111,13 +112,58 @@ class BadPacketsNetworkChannel(
             )
             return
         }
-        PacketSender.s2c(entity).send(packetId.toIdentifier(), FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+        val frames = if (UserSessionRegistry.supportsFraming(user.id)) {
+            try {
+                FramedPayloadCodec.encode(payload)
+            } catch (e: Exception) {
+                logger.error(
+                    "Failed to encode framed packet {} (size={}) for client {}: {}",
+                    packetId,
+                    payload.size,
+                    user.displayName,
+                    e.message,
+                )
+                return
+            }
+        } else {
+            listOf(payload)
+        }
+        val identifier = packetId.toIdentifier()
+        for (frame in frames) {
+            PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+        }
     }
 
     override fun sendToAllClients(packetId: PacketId, payload: ByteArray) {
         val identifier = packetId.toIdentifier()
-        for (user in MinecraftUserRegistry.allActive()) {
-            PacketSender.s2c(user.entity()).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+        val users = MinecraftUserRegistry.allActive()
+        val (modernUsers, legacyUsers) = users.partition { UserSessionRegistry.supportsFraming(it.id) }
+
+        if (modernUsers.isNotEmpty()) {
+            val frames = try {
+                FramedPayloadCodec.encode(payload)
+            } catch (e: Exception) {
+                logger.error(
+                    "Failed to encode framed broadcast packet {} (size={}): {}",
+                    packetId,
+                    payload.size,
+                    e.message,
+                )
+                null
+            }
+            if (frames != null) {
+                for (user in modernUsers) {
+                    for (frame in frames) {
+                        PacketSender.s2c(user.entity()).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+                    }
+                }
+            }
+        }
+
+        if (legacyUsers.isNotEmpty()) {
+            for (user in legacyUsers) {
+                PacketSender.s2c(user.entity()).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+            }
         }
     }
 
