@@ -4,6 +4,7 @@ import com.velocitypowered.api.event.connection.PluginMessageEvent
 import com.velocitypowered.api.event.connection.PluginMessageEvent.ForwardResult
 import com.velocitypowered.api.proxy.Player
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier
+import org.lolicode.moemusic.api.LocalizedText
 import org.lolicode.moemusic.api.MoeMusicUser
 import org.lolicode.moemusic.core.i18n.Localization
 import org.lolicode.moemusic.core.network.ServerPacketHandlers
@@ -13,6 +14,7 @@ import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.PacketRegistry
 import org.lolicode.moemusic.core.runtime.ServerRuntimeCoordinator
 import org.lolicode.moemusic.core.session.UserSessionRegistry
+import org.lolicode.moemusic.core.transport.FramedPayloadCodec
 import org.lolicode.moemusic.core.transport.NetworkChannel
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -68,6 +70,25 @@ class VelocityNetworkChannel(
 
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
         if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) return
+        if (UserSessionRegistry.supportsFraming(user.id)) {
+            val frames = try {
+                FramedPayloadCodec.encode(payload)
+            } catch (e: Exception) {
+                plugin.logger.error(
+                    "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                )
+                return
+            }
+            if (frames.any { it.size > maxPayloadSize }) {
+                plugin.logger.error(
+                    "Dropping MoeMusic packet $packetId: framed payload chunk exceeds Velocity's configured " +
+                        "$maxPayloadSize-byte plugin-message limit.",
+                )
+                return
+            }
+            frames.forEach { frame -> send(user.id, packetId, frame) }
+            return
+        }
         when (val result = VelocityPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
             is VelocityPayloadPolicy.Result.Send -> {
                 logLyricsStripped(packetId, result)
@@ -81,14 +102,41 @@ class VelocityNetworkChannel(
 
     override fun sendToAllClients(packetId: PacketId, payload: ByteArray) {
         val users = VelocityUsers.allActive()
-        when (val result = VelocityPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
-            is VelocityPayloadPolicy.Result.Send -> {
-                logLyricsStripped(packetId, result)
-                users.forEach { send(it.id, packetId, result.payload) }
-            }
+        val (modernUsers, legacyUsers) = users.partition { UserSessionRegistry.supportsFraming(it.id) }
 
-            is VelocityPayloadPolicy.Result.Oversized ->
-                handleOversized(packetId, result, users.map { it.id })
+        if (modernUsers.isNotEmpty()) {
+            val frames = try {
+                FramedPayloadCodec.encode(payload)
+            } catch (e: Exception) {
+                plugin.logger.error(
+                    "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                )
+                null
+            }
+            if (frames != null) {
+                if (frames.any { it.size > maxPayloadSize }) {
+                    plugin.logger.error(
+                        "Dropping MoeMusic packet $packetId: framed payload chunk exceeds Velocity's configured " +
+                            "$maxPayloadSize-byte plugin-message limit.",
+                    )
+                } else {
+                    modernUsers.forEach { user ->
+                        frames.forEach { frame -> send(user.id, packetId, frame) }
+                    }
+                }
+            }
+        }
+
+        if (legacyUsers.isNotEmpty()) {
+            when (val result = VelocityPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
+                is VelocityPayloadPolicy.Result.Send -> {
+                    logLyricsStripped(packetId, result)
+                    legacyUsers.forEach { send(it.id, packetId, result.payload) }
+                }
+
+                is VelocityPayloadPolicy.Result.Oversized ->
+                    handleOversized(packetId, result, legacyUsers.map { it.id })
+            }
         }
     }
 
@@ -156,22 +204,34 @@ class VelocityNetworkChannel(
     }
 
     private inner class SessionBridge : ServerPacketSessionBridge {
-        override fun activate(sender: MoeMusicUser, locale: String): MoeMusicUser {
+        override fun activate(sender: MoeMusicUser, locale: String, protocolVersion: Int): MoeMusicUser {
             val player = plugin.proxy.getPlayer(sender.id).orElse(null) ?: return sender.also {
-                UserSessionRegistry.activate(it, locale)
+                UserSessionRegistry.activate(it, locale, protocolVersion)
             }
-            return VelocityUsers.activate(player, locale)
+            return VelocityUsers.activate(player, locale, protocolVersion)
         }
 
-        override fun standby(sender: MoeMusicUser, locale: String): MoeMusicUser {
+        override fun standby(sender: MoeMusicUser, locale: String, protocolVersion: Int): MoeMusicUser {
             val player = plugin.proxy.getPlayer(sender.id).orElse(null) ?: return sender.also {
-                UserSessionRegistry.registerStandby(it, locale)
+                UserSessionRegistry.registerStandby(it, locale, protocolVersion)
             }
-            return VelocityUsers.standby(player, locale)
+            return VelocityUsers.standby(player, locale, protocolVersion)
         }
 
         override fun handleRegisteredClientLeave(userId: UUID) {
             plugin.handleRegisteredClientLeave(userId)
+        }
+
+        override fun notifyOutdatedClient(user: MoeMusicUser, clientProtocolVersion: Int) {
+            val message = LocalizedText.key("action.moemusic.protocol.outdated_client", clientProtocolVersion)
+            plugin.runOnProxyThread {
+                plugin.proxy.getPlayer(user.id).ifPresent { player ->
+                    VelocityChat.message(
+                        player,
+                        VelocityChatFormatting.prefixed(user.locale, message, VelocityChatFormatting.Tone.NEUTRAL),
+                    )
+                }
+            }
         }
     }
 

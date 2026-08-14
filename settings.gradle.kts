@@ -18,6 +18,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "moemusic-platform-velocity"
+rootProject.name = "moemusic-velocity"
 
 includeBuild("../shared")
