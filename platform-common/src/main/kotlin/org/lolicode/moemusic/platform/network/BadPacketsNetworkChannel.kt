@@ -11,7 +11,7 @@ import org.lolicode.moemusic.core.transport.NetworkChannel
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.PacketRegistry
-import org.lolicode.moemusic.core.i18n.Localization
+import java.util.UUID
 import org.lolicode.moemusic.core.session.UserSessionRegistry
 import org.lolicode.moemusic.platform.player.MinecraftUser
 import org.lolicode.moemusic.platform.player.MinecraftUserRegistry
@@ -59,14 +59,19 @@ class BadPacketsNetworkChannel(
         )
         for (packetId in c2sIds) {
             C2SPacketReceiver.register(packetId.toIdentifier()) { _, player, _, buf, _ ->
-                val bytes = buf.readAvailableBytes()
-                val sender = MinecraftUserRegistry.getActive(player.uuid)
-                    ?: MinecraftUser(
-                        player,
-                        Localization.resolveLocale(UserSessionRegistry.localeFor(player.uuid)),
-                    ) // fall back for pre-active handshake/standby clients that are outside MinecraftUserRegistry
-                packetRegistry.dispatch(packetId, bytes, sender)
+                if (!allowsInboundPacket(packetId, player.uuid)) {
+                    logger.debug(
+                        "Dropping packet {} from player {} before MoeMusic handshake.",
+                        packetId,
+                        player.uuid,
+                    )
+                } else {
+                    val bytes = buf.readAvailableBytes()
+                    val sender = MinecraftUserRegistry.snapshot(player)
+                    packetRegistry.dispatch(packetId, bytes, sender)
+                }
             }
+
         }
     }
 
@@ -173,6 +178,9 @@ class BadPacketsNetworkChannel(
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         )
+
+        internal fun allowsInboundPacket(packetId: PacketId, userId: UUID): Boolean =
+            packetId == PacketIds.CLIENT_HANDSHAKE || UserSessionRegistry.session(userId) != null
 
         internal fun allowsStandbyOrUnregisteredDirectSend(packetId: PacketId): Boolean =
             packetId in STANDBY_OR_UNREGISTERED_DIRECT_PACKET_IDS

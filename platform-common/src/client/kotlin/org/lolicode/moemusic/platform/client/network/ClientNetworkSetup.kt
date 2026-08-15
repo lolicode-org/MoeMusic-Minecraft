@@ -100,7 +100,11 @@ object ClientNetworkSetup {
     ) {
         S2CPacketReceiver.register(ResourceLocation(id.namespace, id.path)) { _, _, buf, _ ->
             try {
-                handler(buf)
+                if (ClientPlaybackHandler.acceptsServerPacket(id)) {
+                    handler(buf)
+                } else {
+                    logger.debug("Dropping packet {} before accepted MoeMusic server handshake.", id)
+                }
             } catch (e: Exception) {
                 logger.error("Error handling packet {}: {}", id, e.message)
             }
