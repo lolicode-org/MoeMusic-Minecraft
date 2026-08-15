@@ -166,7 +166,11 @@ object ClientNetworkSetup {
             Identifier.fromNamespaceAndPath(id.namespace, id.path)
         ) { _, buf ->
             try {
-                handler(buf)
+                if (ClientPlaybackHandler.acceptsServerPacket(id)) {
+                    handler(buf)
+                } else {
+                    logger.debug("Dropping packet {} before accepted MoeMusic server handshake.", id)
+                }
             } catch (e: Exception) {
                 logger.error("Error handling packet {}: {}", id, e.message)
             }
