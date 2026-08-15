@@ -83,17 +83,21 @@ class BadPacketsNetworkChannel(
         for (packetId in c2sIds) {
             PlayPackets.registerServerChannel(packetId.toIdentifier())
             PlayPackets.registerServerReceiver(packetId.toIdentifier()) { ctx, buf ->
-                val player = ctx.player()
-                if (!allowsInboundPacket(packetId, player.uuid)) {
-                    logger.debug(
-                        "Dropping packet {} from player {} before MoeMusic handshake.",
-                        packetId,
-                        player.uuid,
-                    )
-                } else {
-                    val bytes = buf.readAvailableBytes()
-                    val sender = MinecraftUserRegistry.snapshot(player)
-                    packetRegistry.dispatch(packetId, bytes, sender)
+                try {
+                    val player = ctx.player()
+                    if (!allowsInboundPacket(packetId, player.uuid)) {
+                        logger.debug(
+                            "Dropping packet {} from player {} before MoeMusic handshake.",
+                            packetId,
+                            player.uuid,
+                        )
+                    } else {
+                        val bytes = buf.readAvailableBytes()
+                        val sender = MinecraftUserRegistry.snapshot(player)
+                        packetRegistry.dispatch(packetId, bytes, sender)
+                    }
+                } catch (e: Exception) {
+                    logger.error("Error handling inbound packet {}", packetId, e)
                 }
             }
 
@@ -136,7 +140,11 @@ class BadPacketsNetworkChannel(
         }
         val identifier = packetId.toIdentifier()
         for (frame in frames) {
-            PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+            try {
+                PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+            } catch (e: Exception) {
+                logger.error("Failed to send packet {} to {}: {}", packetId, user.displayName, e.message, e)
+            }
         }
     }
 
@@ -159,8 +167,13 @@ class BadPacketsNetworkChannel(
             }
             if (frames != null) {
                 for (user in modernUsers) {
-                    for (frame in frames) {
-                        PacketSender.s2c(user.entity()).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+                    try {
+                        val entity = user.entity()
+                        for (frame in frames) {
+                            PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+                        }
+                    } catch (e: Exception) {
+                        logger.error("Failed to send broadcast packet {} to {}: {}", packetId, user.displayName, e.message, e)
                     }
                 }
             }
@@ -168,7 +181,12 @@ class BadPacketsNetworkChannel(
 
         if (legacyUsers.isNotEmpty()) {
             for (user in legacyUsers) {
-                PacketSender.s2c(user.entity()).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+                try {
+                    val entity = user.entity()
+                    PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+                } catch (e: Exception) {
+                    logger.error("Failed to send broadcast packet {} to {}: {}", packetId, user.displayName, e.message, e)
+                }
             }
         }
     }
