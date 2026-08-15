@@ -18,6 +18,7 @@ import org.lolicode.moemusic.core.session.UserSessionRegistry
 import org.lolicode.moemusic.core.transport.FramedPayloadCodec
 import org.lolicode.moemusic.core.transport.NetworkChannel
 import java.util.UUID
+import java.util.logging.Level
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
@@ -53,6 +54,14 @@ class SpigotNetworkChannel(
 
     override fun onPluginMessageReceived(channel: String, player: Player, message: ByteArray) {
         val packetId = byChannel[channel] ?: return
+        if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
+            if (plugin.logger.isLoggable(Level.FINE)) {
+                plugin.logger.fine(
+                    "Dropping packet $packetId from ${player.uniqueId} before the MoeMusic handshake.",
+                )
+            }
+            return
+        }
         val sender = SpigotUsers.active(player.uniqueId)
             ?: SpigotUser.snapshot(player, Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)))
         registry.dispatch(packetId, message, sender)
