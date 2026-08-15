@@ -53,18 +53,22 @@ class SpigotNetworkChannel(
     }
 
     override fun onPluginMessageReceived(channel: String, player: Player, message: ByteArray) {
-        val packetId = byChannel[channel] ?: return
-        if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
-            if (plugin.logger.isLoggable(Level.FINE)) {
-                plugin.logger.fine(
-                    "Dropping packet $packetId from ${player.uniqueId} before the MoeMusic handshake.",
-                )
+        try {
+            val packetId = byChannel[channel] ?: return
+            if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
+                if (plugin.logger.isLoggable(Level.FINE)) {
+                    plugin.logger.fine(
+                        "Dropping packet $packetId from ${player.uniqueId} before the MoeMusic handshake.",
+                    )
+                }
+                return
             }
-            return
+            val sender = SpigotUsers.active(player.uniqueId)
+                ?: SpigotUser.snapshot(player, Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)))
+            registry.dispatch(packetId, message, sender)
+        } catch (e: Exception) {
+            plugin.logger.log(Level.SEVERE, "Error handling inbound plugin message on channel $channel", e)
         }
-        val sender = SpigotUsers.active(player.uniqueId)
-            ?: SpigotUser.snapshot(player, Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)))
-        registry.dispatch(packetId, message, sender)
     }
 
     override fun sendToServer(packetId: PacketId, payload: ByteArray) = Unit
