@@ -57,6 +57,14 @@ class VelocityNetworkChannel(
         event.result = ForwardResult.handled()
         val player = event.source as? Player ?: return
         if (packetId !in C2S_IDS) return
+        if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
+            plugin.logger.debug(
+                "Dropping packet {} from {} before the MoeMusic handshake.",
+                packetId,
+                player.uniqueId,
+            )
+            return
+        }
 
         val sender = VelocityUsers.active(player.uniqueId)
             ?: VelocityUser.snapshot(
