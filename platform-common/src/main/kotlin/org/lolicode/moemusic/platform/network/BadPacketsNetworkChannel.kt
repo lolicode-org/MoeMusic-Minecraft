@@ -11,11 +11,12 @@ import org.lolicode.moemusic.core.transport.NetworkChannel
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.PacketRegistry
-import org.lolicode.moemusic.core.i18n.Localization
 import org.lolicode.moemusic.core.session.UserSessionRegistry
 import org.lolicode.moemusic.platform.player.MinecraftUser
 import org.lolicode.moemusic.platform.player.MinecraftUserRegistry
 import org.slf4j.LoggerFactory
+
+import java.util.UUID
 
 /**
  * [NetworkChannel] implementation backed by bad packets.
@@ -83,14 +84,20 @@ class BadPacketsNetworkChannel(
         for (packetId in c2sIds) {
             PlayPackets.registerServerChannel(packetId.toIdentifier())
             PlayPackets.registerServerReceiver(packetId.toIdentifier()) { ctx, buf ->
-                val bytes = buf.readAvailableBytes()
-                val sender = MinecraftUserRegistry.getActive(ctx.player().uuid)
-                    ?: MinecraftUser(
-                        ctx.player(),
-                        Localization.resolveLocale(UserSessionRegistry.localeFor(ctx.player().uuid)),
-                    ) // fall back for pre-active handshake/standby clients that are outside MinecraftUserRegistry
-                packetRegistry.dispatch(packetId, bytes, sender)
+                val player = ctx.player()
+                if (!allowsInboundPacket(packetId, player.uuid)) {
+                    logger.debug(
+                        "Dropping packet {} from player {} before MoeMusic handshake.",
+                        packetId,
+                        player.uuid,
+                    )
+                } else {
+                    val bytes = buf.readAvailableBytes()
+                    val sender = MinecraftUserRegistry.snapshot(player)
+                    packetRegistry.dispatch(packetId, bytes, sender)
+                }
             }
+
         }
     }
 
@@ -197,6 +204,9 @@ class BadPacketsNetworkChannel(
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         )
+
+        internal fun allowsInboundPacket(packetId: PacketId, userId: UUID): Boolean =
+            packetId == PacketIds.CLIENT_HANDSHAKE || UserSessionRegistry.session(userId) != null
 
         internal fun allowsStandbyOrUnregisteredDirectSend(packetId: PacketId): Boolean =
             packetId in STANDBY_OR_UNREGISTERED_DIRECT_PACKET_IDS

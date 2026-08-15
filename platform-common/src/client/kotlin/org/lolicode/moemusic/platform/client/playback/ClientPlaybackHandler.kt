@@ -181,6 +181,8 @@ object ClientPlaybackHandler {
 
     fun receiveFromServer(packetId: PacketId, payload: ByteArray) = runtime.receiveFromServer(packetId, payload)
 
+    fun acceptsServerPacket(packetId: PacketId): Boolean = runtime.acceptsServerPacket(packetId)
+
     fun handlePlaybackSnapshotPush(msg: PlaybackSnapshotPush) = runtime.handlePlaybackSnapshotPush(msg)
 
     fun handleStateUpdate(msg: StateUpdate) = runtime.handleStateUpdate(msg)
