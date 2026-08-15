@@ -50,28 +50,32 @@ class VelocityNetworkChannel(
     }
 
     fun handle(event: PluginMessageEvent) {
-        val packetId = byIdentifier[event.identifier] ?: return
+        try {
+            val packetId = byIdentifier[event.identifier] ?: return
 
-        // MoeMusic packets are terminated at the proxy. Forwarding a client-originated packet to
-        // a backend would permit a backend or another proxy plugin to reinterpret its sender.
-        event.result = ForwardResult.handled()
-        val player = event.source as? Player ?: return
-        if (packetId !in C2S_IDS) return
-        if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
-            plugin.logger.debug(
-                "Dropping packet {} from {} before the MoeMusic handshake.",
-                packetId,
-                player.uniqueId,
-            )
-            return
+            // MoeMusic packets are terminated at the proxy. Forwarding a client-originated packet to
+            // a backend would permit a backend or another proxy plugin to reinterpret its sender.
+            event.result = ForwardResult.handled()
+            val player = event.source as? Player ?: return
+            if (packetId !in C2S_IDS) return
+            if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
+                plugin.logger.debug(
+                    "Dropping packet {} from {} before the MoeMusic handshake.",
+                    packetId,
+                    player.uniqueId,
+                )
+                return
+            }
+
+            val sender = VelocityUsers.active(player.uniqueId)
+                ?: VelocityUser.snapshot(
+                    player,
+                    Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)),
+                )
+            registry.dispatch(packetId, event.data, sender)
+        } catch (e: Exception) {
+            plugin.logger.error("Error handling inbound plugin message on channel {}", event.identifier.id, e)
         }
-
-        val sender = VelocityUsers.active(player.uniqueId)
-            ?: VelocityUser.snapshot(
-                player,
-                Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)),
-            )
-        registry.dispatch(packetId, event.data, sender)
     }
 
     override fun sendToServer(packetId: PacketId, payload: ByteArray) = Unit
