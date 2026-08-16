@@ -36,6 +36,11 @@ class VelocityNetworkChannel(
         ?: DEFAULT_MAX_PAYLOAD_SIZE
 
     fun register() {
+        require(maxPayloadSize >= FramedPayloadCodec.MAX_CHUNK_FRAME_BYTES) {
+            "Velocity max plugin-message payload size $maxPayloadSize is below required v3 chunk frame size " +
+                FramedPayloadCodec.MAX_CHUNK_FRAME_BYTES
+        }
+
         plugin.proxy.channelRegistrar.register(*identifiers.values.toTypedArray())
         ServerPacketHandlers(this, SessionBridge()).registerAll(registry)
         plugin.logger.info("Registered ${identifiers.size} MoeMusic Velocity plugin-message channels.")
@@ -63,6 +68,18 @@ class VelocityNetworkChannel(
                     "Dropping packet {} from {} before the MoeMusic handshake.",
                     packetId,
                     player.uniqueId,
+                )
+                return
+            }
+
+            val inboundLimit = minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_C2S_PAYLOAD_BYTES)
+            if (event.data.size > inboundLimit) {
+                plugin.logger.warn(
+                    "Dropping oversized C2S packet {} from {} (size={}, limit={})",
+                    packetId,
+                    player.uniqueId,
+                    event.data.size,
+                    inboundLimit,
                 )
                 return
             }
@@ -101,7 +118,11 @@ class VelocityNetworkChannel(
             frames.forEach { frame -> send(user.id, packetId, frame) }
             return
         }
-        when (val result = VelocityPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
+        when (val result = VelocityPayloadPolicy.fit(
+            packetId,
+            payload,
+            minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES),
+        )) {
             is VelocityPayloadPolicy.Result.Send -> {
                 logLyricsStripped(packetId, result)
                 send(user.id, packetId, result.payload)
@@ -140,7 +161,11 @@ class VelocityNetworkChannel(
         }
 
         if (legacyUsers.isNotEmpty()) {
-            when (val result = VelocityPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
+            when (val result = VelocityPayloadPolicy.fit(
+                packetId,
+                payload,
+                minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES),
+            )) {
                 is VelocityPayloadPolicy.Result.Send -> {
                     logLyricsStripped(packetId, result)
                     legacyUsers.forEach { send(it.id, packetId, result.payload) }
