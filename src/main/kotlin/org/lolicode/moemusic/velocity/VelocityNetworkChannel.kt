@@ -99,7 +99,21 @@ class VelocityNetworkChannel(
 
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
         if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) return
+        val player = plugin.proxy.getPlayer(user.id).orElse(null) ?: return
+        val identifier = identifiers[packetId] ?: return
         if (UserSessionRegistry.supportsFraming(user.id)) {
+            if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
+                val frame = try {
+                    FramedPayloadCodec.encodeSingle(payload)
+                } catch (e: Exception) {
+                    plugin.logger.error(
+                        "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                    )
+                    return
+                }
+                send(player, identifier, packetId, frame)
+                return
+            }
             val frames = try {
                 FramedPayloadCodec.encode(payload)
             } catch (e: Exception) {
@@ -115,7 +129,7 @@ class VelocityNetworkChannel(
                 )
                 return
             }
-            frames.forEach { frame -> send(user.id, packetId, frame) }
+            frames.forEach { frame -> send(player, identifier, packetId, frame) }
             return
         }
         when (val result = VelocityPayloadPolicy.fit(
@@ -125,7 +139,7 @@ class VelocityNetworkChannel(
         )) {
             is VelocityPayloadPolicy.Result.Send -> {
                 logLyricsStripped(packetId, result)
-                send(user.id, packetId, result.payload)
+                send(player, identifier, packetId, result.payload)
             }
 
             is VelocityPayloadPolicy.Result.Oversized ->
@@ -138,23 +152,48 @@ class VelocityNetworkChannel(
         val (modernUsers, legacyUsers) = users.partition { UserSessionRegistry.supportsFraming(it.id) }
 
         if (modernUsers.isNotEmpty()) {
-            val frames = try {
-                FramedPayloadCodec.encode(payload)
-            } catch (e: Exception) {
-                plugin.logger.error(
-                    "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
-                )
-                null
+            val singleFrame: ByteArray?
+            val frames: List<ByteArray>?
+            if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
+                singleFrame = try {
+                    FramedPayloadCodec.encodeSingle(payload)
+                } catch (e: Exception) {
+                    plugin.logger.error(
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                    )
+                    null
+                }
+                frames = null
+            } else {
+                singleFrame = null
+                frames = try {
+                    FramedPayloadCodec.encode(payload)
+                } catch (e: Exception) {
+                    plugin.logger.error(
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                    )
+                    null
+                }
             }
-            if (frames != null) {
-                if (frames.any { it.size > maxPayloadSize }) {
+            if (singleFrame != null || frames != null) {
+                if (frames?.any { it.size > maxPayloadSize } == true) {
                     plugin.logger.error(
                         "Dropping MoeMusic packet $packetId: framed payload chunk exceeds Velocity's configured " +
                             "$maxPayloadSize-byte plugin-message limit.",
                     )
                 } else {
-                    modernUsers.forEach { user ->
-                        frames.forEach { frame -> send(user.id, packetId, frame) }
+                    val identifier = identifiers[packetId]
+                    if (identifier != null) {
+                        modernUsers.forEach { user ->
+                            val player = plugin.proxy.getPlayer(user.id).orElse(null) ?: return@forEach
+                            if (singleFrame != null) {
+                                send(player, identifier, packetId, singleFrame)
+                            } else {
+                                requireNotNull(frames).forEach { frame ->
+                                    send(player, identifier, packetId, frame)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -168,7 +207,7 @@ class VelocityNetworkChannel(
             )) {
                 is VelocityPayloadPolicy.Result.Send -> {
                     logLyricsStripped(packetId, result)
-                    legacyUsers.forEach { send(it.id, packetId, result.payload) }
+                    legacyUsers.forEach { user -> send(user.id, packetId, result.payload) }
                 }
 
                 is VelocityPayloadPolicy.Result.Oversized ->
@@ -180,9 +219,18 @@ class VelocityNetworkChannel(
     private fun send(userId: UUID, packetId: PacketId, payload: ByteArray) {
         val player = plugin.proxy.getPlayer(userId).orElse(null) ?: return
         val identifier = identifiers[packetId] ?: return
+        send(player, identifier, packetId, payload)
+    }
+
+    private fun send(
+        player: Player,
+        identifier: MinecraftChannelIdentifier,
+        packetId: PacketId,
+        payload: ByteArray,
+    ) {
         runCatching {
             if (!player.sendPluginMessage(identifier, payload) &&
-                unregisteredChannelWarnings.add("$userId:${packetId.toChannelKey()}")
+                unregisteredChannelWarnings.add("${player.uniqueId}:${packetId.toChannelKey()}")
             ) {
                 plugin.logger.warn(
                     "Client ${player.username} did not register ${packetId.toChannelKey()}; " +
@@ -190,7 +238,7 @@ class VelocityNetworkChannel(
                 )
             }
         }.onFailure { error ->
-            plugin.logger.error("Failed to send MoeMusic packet $packetId to $userId.", error)
+            plugin.logger.error("Failed to send MoeMusic packet $packetId to ${player.uniqueId}.", error)
         }
     }
 
