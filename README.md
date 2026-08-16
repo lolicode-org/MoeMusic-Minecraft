@@ -17,8 +17,8 @@ populated.
 
 Configuration is generated under `plugins/MoeMusic/`. Standard Bukkit
 permission nodes are used when explicitly configured; otherwise MoeMusic's
-configured permission levels fall back to everyone for level 0 and operators
-for levels 1 through 4.
+configured permission levels fall back to everyone for level 0, operators
+for levels 1 through 4, and disabled for level 5.
 
 ## Compatibility
 

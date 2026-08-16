@@ -150,7 +150,7 @@ class MoeMusicPlugin : JavaPlugin(), Listener {
             if (player.isPermissionSet(permission)) {
                 player.hasPermission(permission)
             } else {
-                defaultLevel <= 0 || player.isOp
+                defaultLevel <= 0 || (defaultLevel <= 4 && player.isOp)
             }
         }
         return if (server.isPrimaryThread) check.call() else if (isEnabled) {
