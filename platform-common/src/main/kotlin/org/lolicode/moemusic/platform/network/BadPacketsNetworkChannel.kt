@@ -11,6 +11,7 @@ import org.lolicode.moemusic.core.transport.NetworkChannel
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.core.protocol.PacketRegistry
+
 import java.util.UUID
 import org.lolicode.moemusic.core.session.UserSessionRegistry
 import org.lolicode.moemusic.platform.player.MinecraftUser
@@ -66,11 +67,19 @@ class BadPacketsNetworkChannel(
                             packetId,
                             player.uuid,
                         )
+                    } else if (buf.readableBytes() > FramedPayloadCodec.MAX_LEGACY_C2S_PAYLOAD_BYTES) {
+                        logger.debug(
+                            "Dropping oversized C2S packet {} from player {} (size={})",
+                            packetId,
+                            player.uuid,
+                            buf.readableBytes(),
+                        )
                     } else {
                         val bytes = buf.readAvailableBytes()
                         val sender = MinecraftUserRegistry.snapshot(player)
                         packetRegistry.dispatch(packetId, bytes, sender)
                     }
+
                 } catch (e: Exception) {
                     logger.error("Error handling inbound packet {}", packetId, e)
                 }
@@ -84,6 +93,10 @@ class BadPacketsNetworkChannel(
     // -------------------------------------------------------------------------
 
     override fun sendToServer(packetId: PacketId, payload: ByteArray) {
+        if (payload.size > FramedPayloadCodec.MAX_LEGACY_C2S_PAYLOAD_BYTES) {
+            logger.warn("Dropping oversized C2S packet {} (size={})", packetId, payload.size)
+            return
+        }
         PacketSender.c2s().send(packetId.toIdentifier(), FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
     }
 
@@ -95,6 +108,12 @@ class BadPacketsNetworkChannel(
                 packetId,
                 user.displayName,
             )
+            return
+        }
+        if (!UserSessionRegistry.supportsFraming(user.id) &&
+            payload.size > FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES
+        ) {
+            logger.warn("Dropping oversized legacy S2C packet {} (size={})", packetId, payload.size)
             return
         }
         val frames = if (UserSessionRegistry.supportsFraming(user.id)) {
@@ -155,12 +174,16 @@ class BadPacketsNetworkChannel(
         }
 
         if (legacyUsers.isNotEmpty()) {
-            for (user in legacyUsers) {
-                try {
-                    val entity = user.entity()
-                    PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
-                } catch (e: Exception) {
-                    logger.error("Failed to send broadcast packet {} to {}: {}", packetId, user.displayName, e.message, e)
+            if (payload.size > FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES) {
+                logger.warn("Dropping oversized legacy S2C broadcast packet {} (size={})", packetId, payload.size)
+            } else {
+                for (user in legacyUsers) {
+                    try {
+                        val entity = user.entity()
+                        PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+                    } catch (e: Exception) {
+                        logger.error("Failed to send broadcast packet {} to {}: {}", packetId, user.displayName, e.message, e)
+                    }
                 }
             }
         }

@@ -11,6 +11,8 @@ import lol.bai.badpackets.api.PacketSender
 import lol.bai.badpackets.api.S2CPacketReceiver
 import net.minecraft.resources.ResourceLocation
 import org.lolicode.moemusic.client.mixin.MixinBadPacketsAbstractPacketHandler
+import org.lolicode.moemusic.core.transport.FramedPayloadCodec
+
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
 import org.lolicode.moemusic.platform.client.playback.ClientPlaybackHandler
@@ -128,7 +130,9 @@ object ClientNetworkSetup {
     ) {
         S2CPacketReceiver.register(ResourceLocation(id.namespace, id.path)) { _, _, buf, _ ->
             try {
-                if (ClientPlaybackHandler.acceptsServerPacket(id)) {
+                if (buf.readableBytes() > FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES) {
+                    logger.debug("Dropping oversized S2C packet {} (size={})", id, buf.readableBytes())
+                } else if (ClientPlaybackHandler.acceptsServerPacket(id)) {
                     handler(buf)
                 } else {
                     logger.debug("Dropping packet {} before accepted MoeMusic server handshake.", id)
