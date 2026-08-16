@@ -20,9 +20,9 @@ interface AdvancedPermissionChecker {
  * Shared permission resolution for both Brigadier commands and packet-driven actions.
  *
  * Resolution order:
- * 1. Singleplayer world owner and console command sources are always allowed.
+ * 1. Singleplayer world owner (for levels <= 4) and console command sources are allowed.
  * 2. If the current platform installed an [AdvancedPermissionChecker], delegate to it.
- * 3. Otherwise fall back to vanilla command permission levels.
+ * 3. Otherwise fall back to vanilla command permission levels (levels 0-4; level 5 is denied).
  */
 object PermissionResolver {
 
@@ -43,21 +43,37 @@ object PermissionResolver {
         permissions.any { hasPermission(source, it) }
 
     fun hasPermission(player: ServerPlayer, permission: String, defaultLevel: Int): Boolean {
-        if (player.server?.isSingleplayerOwner(player.gameProfile) == true) return true
+        val clampedLevel = clampLevel(defaultLevel)
+        if (clampedLevel <= PermissionNodes.MAX_VANILLA_LEVEL && player.server.isSingleplayerOwner(player.gameProfile)) {
+            return true
+        }
 
-        val permissionLevel = clampLevel(defaultLevel)
-        return advancedChecker?.hasPermission(player, permission, permissionLevel)
-            ?: player.hasPermissions(permissionLevel)
+        val checker = advancedChecker
+        if (checker != null) {
+            return checker.hasPermission(player, permission, clampedLevel)
+        }
+
+        if (clampedLevel > PermissionNodes.MAX_VANILLA_LEVEL) {
+            return false
+        }
+        return player.hasPermissions(clampedLevel)
     }
 
     internal fun hasPermission(source: CommandSourceStack, permission: String, defaultLevel: Int): Boolean {
         val player = source.player
-        if (player != null && source.server.isSingleplayerOwner(player.gameProfile)) return true
-        if (player == null && isConsole(source)) return true
+        if (player != null) return hasPermission(player, permission, defaultLevel)
+        if (isConsole(source)) return true
 
-        val permissionLevel = clampLevel(defaultLevel)
-        return advancedChecker?.hasPermission(source, permission, permissionLevel)
-            ?: source.hasPermission(permissionLevel)
+        val clampedLevel = clampLevel(defaultLevel)
+        val checker = advancedChecker
+        if (checker != null) {
+            return checker.hasPermission(source, permission, clampedLevel)
+        }
+
+        if (clampedLevel > PermissionNodes.MAX_VANILLA_LEVEL) {
+            return false
+        }
+        return source.hasPermission(clampedLevel)
     }
 
     private fun clampLevel(level: Int): Int =
