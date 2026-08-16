@@ -56,6 +56,7 @@ object ClientPlaybackHandler {
         fun onSelectionPageResponse(response: SelectionPageResponse) {}
         fun onQueueResponse(response: QueueResponse) {}
         fun onQueueRemoveResponse(response: QueueRemoveResponse) {}
+        fun onQueueClearResponse(response: QueueClearResponse) {}
         fun onPlaybackControlResponse(response: PlaybackControlResponse) {}
         fun onContentFilterActionResponse(response: ContentFilterActionResponse) {}
         fun onLocalPlaybackBlocked(message: String) {}
@@ -105,6 +106,9 @@ object ClientPlaybackHandler {
 
     val lastQueueRemoveResponse: QueueRemoveResponse?
         get() = runtime.lastQueueRemoveResponse
+
+    val lastQueueClearResponse: QueueClearResponse?
+        get() = runtime.lastQueueClearResponse
 
     val lastPlaybackControlResponse: PlaybackControlResponse?
         get() = runtime.lastPlaybackControlResponse
@@ -237,8 +241,14 @@ object ClientPlaybackHandler {
 
     fun sendQueueRemoveRequest(track: TrackInfo): Long? = runtime.sendQueueRemoveRequest(track)
 
+    fun sendQueueClearRequest(scope: QueueClearScopeProto, targetUserId: String? = null): Long? =
+        runtime.sendQueueClearRequest(scope, targetUserId)
+
     internal fun beginQueueRemoveRequest(sourceId: String, trackId: String, queueEntryId: String? = null): Deferred<QueueRemoveResponse>? =
         runtime.beginQueueRemoveRequest(sourceId, trackId, queueEntryId)
+
+    internal fun beginQueueClearRequest(scope: QueueClearScopeProto, targetUserId: String? = null): Deferred<QueueClearResponse>? =
+        runtime.beginQueueClearRequest(scope, targetUserId)
 
     fun sendTrackSubmit(track: TrackInfo, mode: TrackAddMode = TrackAddMode.NORMAL): Long? =
         runtime.sendTrackSubmit(track, mode)
@@ -456,6 +466,10 @@ object ClientPlaybackHandler {
 
         override fun onQueueRemoveResponse(response: QueueRemoveResponse) {
             guiListener?.onQueueRemoveResponse(response)
+        }
+
+        override fun onQueueClearResponse(response: QueueClearResponse) {
+            guiListener?.onQueueClearResponse(response)
         }
 
         override fun onPlaybackControlResponse(response: PlaybackControlResponse) {

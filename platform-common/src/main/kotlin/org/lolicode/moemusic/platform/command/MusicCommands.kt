@@ -16,6 +16,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import net.minecraft.commands.CommandSourceStack
 import net.minecraft.commands.Commands
+import net.minecraft.commands.arguments.selector.EntitySelectorParser
+import net.minecraft.server.level.ServerPlayer
 import net.minecraft.network.chat.ClickEvent
 import net.minecraft.network.chat.Component
 import net.minecraft.network.chat.HoverEvent
@@ -138,6 +140,7 @@ object MusicCommands {
                 .then(
                     Commands.literal("queue")
                         .requires(requiresPermission(PermissionNodes.QUEUE_VIEW))
+                        .then(clearCommandNode())
                         .then(
                             Commands.literal("--page")
                                 .then(
@@ -154,6 +157,7 @@ object MusicCommands {
                 .then(
                     Commands.literal("list")
                         .requires(requiresPermission(PermissionNodes.QUEUE_VIEW))
+                        .then(clearCommandNode())
                         .then(
                             Commands.literal("--page")
                                 .then(
@@ -192,6 +196,7 @@ object MusicCommands {
                         )
                 )
                 .then(removeCommandNode())
+                .then(clearCommandNode())
                 .then(searchCommandNode())
         )
     }
@@ -500,6 +505,27 @@ object MusicCommands {
                             }
                     )
             )
+
+    private fun clearCommandNode(): LiteralArgumentBuilder<CommandSourceStack> =
+        Commands.literal("clear")
+            .requires(requiresPermission(PermissionNodes.QUEUE_VIEW))
+            .then(
+                Commands.literal("--all")
+                    .requires(requiresPermission(PermissionNodes.QUEUE_CONTROL))
+                    .executes { ctx -> cmdQueueClearAll(ctx.source) }
+            )
+            .then(
+                Commands.literal("--self")
+                    .executes { ctx -> cmdQueueClearSelf(ctx.source) }
+            )
+            .then(
+                Commands.argument("target", StringArgumentType.string())
+                    .suggests { ctx, builder -> suggestQueueUsers(ctx.source, builder) }
+                    .executes { ctx ->
+                        cmdQueueClearTarget(ctx.source, StringArgumentType.getString(ctx, "target"))
+                    }
+            )
+            .executes { ctx -> cmdQueueClearSelf(ctx.source) }
 
     private fun filterArtistCommandNode(): LiteralArgumentBuilder<CommandSourceStack> =
         Commands.literal("artist")
@@ -840,6 +866,171 @@ object MusicCommands {
                 0
             }
         }
+    }
+
+    private fun resolveTargetPlayers(source: CommandSourceStack, target: String): List<ServerPlayer> {
+        val server = source.server
+        if (target.startsWith("@")) {
+            return runCatching {
+                val reader = StringReader(target)
+                val parser = EntitySelectorParser(reader, true)
+                parser.parse().findPlayers(source)
+            }.getOrDefault(emptyList())
+        }
+        val single = server.playerList.getPlayerByName(target)
+        return if (single != null) listOf(single) else emptyList()
+    }
+
+    private fun suggestQueueUsers(source: CommandSourceStack, builder: SuggestionsBuilder): CompletableFuture<Suggestions> {
+        val input = builder.remainingLowerCase
+        val suggestions = LinkedHashSet<String>()
+        if (PermissionResolver.hasPermission(source, PermissionNodes.QUEUE_CONTROL)) {
+            suggestions.add("--all")
+            suggestions.add("@a")
+            suggestions.add("@p")
+            suggestions.add("@r")
+            suggestions.add("@s")
+        }
+        suggestions.add("--self")
+        source.server.playerList.players.forEach { player ->
+            suggestions.add(player.gameProfile.name)
+        }
+        runCatching { MoePlatform.playbackController.userQueueSnapshot() }.getOrNull()?.forEach { track ->
+            track.submittedByUserName?.let { suggestions.add(it) }
+        }
+        for (suggestion in suggestions) {
+            if (suggestion.lowercase().startsWith(input)) {
+                builder.suggest(suggestion)
+            }
+        }
+        return builder.buildFuture()
+    }
+
+    private fun cmdQueueClearSelf(source: CommandSourceStack): Int {
+        val requester = sourceUser(source)
+        if (requester == null) {
+            sendFailure(source, LocalizedText.key("error.moemusic.queue.clear_console_requires_target"))
+            return 0
+        }
+        val outcome = MoePlatform.userActionService.clearQueue(
+            targetUserId = requester.id,
+            targetUserName = requester.displayName,
+            requester = requester,
+        )
+        val failure = outcome.failure
+        if (failure != null) {
+            sendFailure(source, failure)
+            return 0
+        }
+        if (outcome.removedCount == 0) {
+            sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_none"))
+        } else {
+            sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_self", outcome.removedCount.toString()))
+        }
+        return outcome.removedCount
+    }
+
+    private fun cmdQueueClearAll(source: CommandSourceStack): Int {
+        val requester = sourceUser(source)
+        if (requester != null && !PermissionResolver.hasPermission(source, PermissionNodes.QUEUE_CONTROL)) {
+            sendFailure(source, LocalizedText.key("error.moemusic.permission.queue_control"))
+            return 0
+        }
+        val outcome = MoePlatform.userActionService.clearQueue(
+            targetUserId = null,
+            targetUserName = null,
+            requester = requester,
+        )
+        val failure = outcome.failure
+        if (failure != null) {
+            sendFailure(source, failure)
+            return 0
+        }
+        if (outcome.removedCount == 0) {
+            sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_none"))
+        } else {
+            sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_all", outcome.removedCount.toString()))
+        }
+        return outcome.removedCount
+    }
+
+    private fun cmdQueueClearTarget(source: CommandSourceStack, rawTarget: String): Int {
+        val target = rawTarget.trim()
+        if (target.isBlank()) {
+            return cmdQueueClearSelf(source)
+        }
+        if (target.equals("--all", ignoreCase = true) || target.equals("all", ignoreCase = true)) {
+            return cmdQueueClearAll(source)
+        }
+        if (target.equals("--self", ignoreCase = true) || target.equals("self", ignoreCase = true)) {
+            return cmdQueueClearSelf(source)
+        }
+
+        val matchedPlayers = resolveTargetPlayers(source, target)
+        if (matchedPlayers.isNotEmpty()) {
+            val requester = sourceUser(source)
+            val hasOther = matchedPlayers.any { requester == null || it.uuid != requester.id }
+            if (hasOther && requester != null && !PermissionResolver.hasPermission(source, PermissionNodes.QUEUE_CONTROL)) {
+                sendFailure(source, LocalizedText.key("error.moemusic.permission.queue_control"))
+                return 0
+            }
+            var totalRemoved = 0
+            val affectedPlayers = HashSet<UUID>()
+            for (player in matchedPlayers) {
+                val outcome = MoePlatform.userActionService.clearQueue(
+                    targetUserId = player.uuid,
+                    targetUserName = player.gameProfile.name,
+                    requester = requester,
+                )
+                if (outcome.removedCount > 0) {
+                    totalRemoved += outcome.removedCount
+                    affectedPlayers.add(player.uuid)
+                }
+            }
+            if (totalRemoved == 0) {
+                sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_none"))
+            } else if (matchedPlayers.size > 1) {
+                sendSuccess(
+                    source,
+                    LocalizedText.key("action.moemusic.queue.cleared_multi_user", totalRemoved.toString(), affectedPlayers.size.toString()),
+                )
+            } else {
+                val single = matchedPlayers.first()
+                if (requester != null && single.uuid == requester.id) {
+                    sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_self", totalRemoved.toString()))
+                } else {
+                    sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_user", totalRemoved.toString(), single.gameProfile.name))
+                }
+            }
+            return totalRemoved
+        }
+
+        // Fallback for offline player / raw username / UUID
+        val requester = sourceUser(source)
+        val isSelf = requester != null && (target.equals(requester.displayName, ignoreCase = true) || target == requester.id.toString())
+        if (!isSelf && requester != null && !PermissionResolver.hasPermission(source, PermissionNodes.QUEUE_CONTROL)) {
+            sendFailure(source, LocalizedText.key("error.moemusic.permission.queue_control"))
+            return 0
+        }
+        val targetUuid = runCatching { UUID.fromString(target) }.getOrNull()
+        val outcome = MoePlatform.userActionService.clearQueue(
+            targetUserId = targetUuid,
+            targetUserName = if (targetUuid == null) target else null,
+            requester = requester,
+        )
+        val failure = outcome.failure
+        if (failure != null) {
+            sendFailure(source, failure)
+            return 0
+        }
+        if (outcome.removedCount == 0) {
+            sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_none"))
+        } else if (isSelf) {
+            sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_self", outcome.removedCount.toString()))
+        } else {
+            sendSuccess(source, LocalizedText.key("action.moemusic.queue.cleared_user", outcome.removedCount.toString(), target))
+        }
+        return outcome.removedCount
     }
 
     private fun cmdFilterReload(source: CommandSourceStack): Int {
