@@ -187,6 +187,22 @@ class VelocityMusicCommand(
                     },
             )
             .then(
+                BrigadierCommand.literalArgumentBuilder("--entry")
+                    .then(
+                        BrigadierCommand.requiredArgumentBuilder("entryId", StringArgumentType.string())
+                            .executes { context ->
+                                remove(
+                                    context.source,
+                                    listOf(
+                                        "--entry",
+                                        StringArgumentType.getString(context, "entryId"),
+                                    ),
+                                )
+                                Command.SINGLE_SUCCESS
+                            },
+                    ),
+            )
+            .then(
                 sourceArgument().then(
                     BrigadierCommand.requiredArgumentBuilder("trackId", StringArgumentType.string())
                         .executes { context ->
@@ -625,14 +641,38 @@ class VelocityMusicCommand(
 
     private fun remove(source: CommandSource, args: List<String>) {
         if (!require(source, PermissionNodes.QUEUE_VIEW)) return
+        if (args.size == 2 && args[0] == "--entry") {
+            val entryId = unquote(args[1])
+            if (entryId.isBlank()) {
+                return VelocityChat.failure(source, LocalizedText.key("error.moemusic.track.bad_request"))
+            }
+            val outcome = ServerRuntimeCoordinator.userActionService.removeQueuedTrackByEntryId("", "", entryId, user(source))
+            return when (outcome.result) {
+                QueueRemoveResult.REMOVED -> VelocityChat.success(source, LocalizedText.key("action.moemusic.queue.removed", entryId))
+                QueueRemoveResult.NOT_FOUND -> VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.track_not_found"))
+                QueueRemoveResult.FORBIDDEN -> VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
+                else -> VelocityChat.failure(source, outcome.failure ?: LocalizedText.key("error.moemusic.internal"))
+            }
+        }
         if (args.size == 1) {
             val index = args[0].toIntOrNull()
                 ?: return VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.invalid_index"))
             val track = ServerRuntimeCoordinator.queue.userQueueSnapshot().getOrNull(index - 1)
                 ?: return VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.invalid_index"))
-            return remove(source, listOf(track.sourceId.orEmpty(), track.id))
+            val outcome = ServerRuntimeCoordinator.userActionService.removeQueuedTrackByEntryId(
+                track.sourceId.orEmpty(),
+                track.id,
+                track.queueEntryId,
+                user(source),
+            )
+            return when (outcome.result) {
+                QueueRemoveResult.REMOVED -> VelocityChat.success(source, LocalizedText.key("action.moemusic.queue.removed", track.id))
+                QueueRemoveResult.NOT_FOUND -> VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.track_not_found"))
+                QueueRemoveResult.FORBIDDEN -> VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
+                else -> VelocityChat.failure(source, outcome.failure ?: LocalizedText.key("error.moemusic.internal"))
+            }
         }
-        if (args.size < 2) return usage(source, "remove <index> | <source> <trackId>")
+        if (args.size < 2) return usage(source, "remove <index> | --entry <entryId> | <source> <trackId>")
         val sourceId = unquote(args[0])
         val trackId = unquote(args.drop(1).joinToString(" "))
         if (sourceId.isBlank() || trackId.isBlank()) {
@@ -947,7 +987,7 @@ class VelocityMusicCommand(
                     source,
                     "✕",
                     "§c",
-                    queueRemoveCommand(trackSourceId, track.id),
+                    queueRemoveCommand(track),
                     LocalizedText.key("action.moemusic.queue.remove_hover", title),
                 ),
             )
@@ -1165,6 +1205,10 @@ class VelocityMusicCommand(
 
     private fun queueRemoveCommand(sourceId: String, trackId: String): String =
         "/music remove ${quoteCommandToken(sourceId)} ${quoteCommandToken(trackId)}"
+
+    private fun queueRemoveCommand(track: TrackInfo): String =
+        track.queueEntryId?.let { "/music remove --entry ${quoteCommandToken(it)}" }
+            ?: queueRemoveCommand(track.sourceId.orEmpty(), track.id)
 
     private fun searchCommand(query: String, sourceId: String? = null, page: Int = 1): String {
         val base = buildString {
