@@ -45,6 +45,7 @@ import org.lolicode.moemusic.core.error.UserFacingErrors
 import org.lolicode.moemusic.core.permission.PermissionNodes
 import org.lolicode.moemusic.core.plugin.PluginManager
 import org.lolicode.moemusic.core.runtime.ServerRuntimeCoordinator
+import org.lolicode.moemusic.core.source.SelectionSessionManager
 import org.lolicode.moemusic.core.source.builtin.HttpMusicSource
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
@@ -97,16 +98,9 @@ class VelocityMusicCommand(
                     .requires { source -> hasPermission(source, PermissionNodes.PLAYBACK_CONTROL) }
                     .executes { context -> executeControl(context, PlaybackAction.STOP, "action.moemusic.playback.stopped") },
             )
-            .then(
-                BrigadierCommand.literalArgumentBuilder("queue")
-                    .requires { source -> hasPermission(source, PermissionNodes.QUEUE_VIEW) }
-                    .executes { context -> queue(context.source); Command.SINGLE_SUCCESS },
-            )
-            .then(
-                BrigadierCommand.literalArgumentBuilder("list")
-                    .requires { source -> hasPermission(source, PermissionNodes.QUEUE_VIEW) }
-                    .executes { context -> queue(context.source); Command.SINGLE_SUCCESS },
-            )
+            .then(queueCommandNode("queue"))
+            .then(queueCommandNode("list"))
+            .then(choicesCommandNode())
             .then(removeCommandNode())
             .then(searchCommandNode())
             .then(reloadCommandNode())
@@ -242,6 +236,54 @@ class VelocityMusicCommand(
                                     ),
                             ),
                     ),
+            )
+
+    private fun queueCommandNode(name: String): LiteralArgumentBuilder<CommandSource> =
+        BrigadierCommand.literalArgumentBuilder(name)
+            .requires { source -> hasPermission(source, PermissionNodes.QUEUE_VIEW) }
+            .then(
+                BrigadierCommand.literalArgumentBuilder("--page")
+                    .then(
+                        BrigadierCommand.requiredArgumentBuilder("page", IntegerArgumentType.integer(1))
+                            .executes { context ->
+                                queue(context.source, IntegerArgumentType.getInteger(context, "page"))
+                                Command.SINGLE_SUCCESS
+                            }
+                    )
+            )
+            .then(
+                BrigadierCommand.requiredArgumentBuilder("page", IntegerArgumentType.integer(1))
+                    .executes { context ->
+                        queue(context.source, IntegerArgumentType.getInteger(context, "page"))
+                        Command.SINGLE_SUCCESS
+                    }
+            )
+            .executes { context -> queue(context.source, 1); Command.SINGLE_SUCCESS }
+
+    private fun choicesCommandNode(): LiteralArgumentBuilder<CommandSource> =
+        BrigadierCommand.literalArgumentBuilder("choices")
+            .requires { source -> hasPermission(source, PermissionNodes.SUBMIT) }
+            .then(
+                BrigadierCommand.requiredArgumentBuilder("sessionId", StringArgumentType.string())
+                    .then(
+                        BrigadierCommand.requiredArgumentBuilder("page", IntegerArgumentType.integer(1))
+                            .executes { context ->
+                                choicesCommand(
+                                    context.source,
+                                    StringArgumentType.getString(context, "sessionId"),
+                                    IntegerArgumentType.getInteger(context, "page"),
+                                )
+                                Command.SINGLE_SUCCESS
+                            }
+                    )
+                    .executes { context ->
+                        choicesCommand(
+                            context.source,
+                            StringArgumentType.getString(context, "sessionId"),
+                            1,
+                        )
+                        Command.SINGLE_SUCCESS
+                    }
             )
 
     private fun searchQueryNode(
@@ -519,7 +561,7 @@ class VelocityMusicCommand(
         }
     }
 
-    private fun queue(source: CommandSource) {
+    private fun queue(source: CommandSource, page: Int = 1) {
         if (!require(source, PermissionNodes.QUEUE_VIEW)) return
         val current = ServerRuntimeCoordinator.playbackController.currentContext?.track
         val queued = ServerRuntimeCoordinator.queue.userQueueSnapshot()
@@ -527,12 +569,58 @@ class VelocityMusicCommand(
             VelocityChat.success(source, LocalizedText.key("action.moemusic.queue.empty"))
             return
         }
+        val pageSize = 8
+        val total = queued.size
+        val totalPages = if (total == 0) 1 else ((total - 1) / pageSize) + 1
+        val clampedPage = page.coerceIn(1, totalPages)
+        val offset = (clampedPage - 1) * pageSize
+        val pageTracks = queued.drop(offset).take(pageSize)
         val lines = buildList {
-            add(prefixed(source, LocalizedText.key("action.moemusic.queue.header", queued.size + if (current == null) 0 else 1)))
-            current?.let { add(queueLine(source, null, it, true)) }
-            queued.forEachIndexed { index, track -> add(queueLine(source, index + 1, track, false)) }
+            if (totalPages > 1) {
+                add(prefixed(source, LocalizedText.key("action.moemusic.queue.header_paged", total, clampedPage, totalPages)))
+            } else {
+                add(prefixed(source, LocalizedText.key("action.moemusic.queue.header", queued.size + if (current == null) 0 else 1)))
+            }
+            if (clampedPage == 1) {
+                current?.let { add(queueLine(source, null, it, true)) }
+            }
+            pageTracks.forEachIndexed { index, track -> add(queueLine(source, offset + index + 1, track, false)) }
+            queuePaginationFooter(source, clampedPage, totalPages)?.let(::add)
         }
         VelocityChat.multiline(source, lines)
+    }
+
+    private fun queuePaginationFooter(
+        source: CommandSource,
+        currentPage: Int,
+        totalPages: Int,
+    ): Component? {
+        if (totalPages <= 1) return null
+        var footer = VelocityChat.legacy("  ")
+        if (currentPage > 1) {
+            footer = footer.append(
+                VelocityChat.action(
+                    source,
+                    "<",
+                    "§e",
+                    "/music queue --page ${currentPage - 1}",
+                    LocalizedText.key("action.moemusic.queue.prev_page"),
+                )
+            ).append(VelocityChat.legacy(" "))
+        }
+        footer = footer.append(VelocityChat.legacy("§8(§7$currentPage§8 / §7$totalPages§8)"))
+        if (currentPage < totalPages) {
+            footer = footer.append(VelocityChat.legacy(" ")).append(
+                VelocityChat.action(
+                    source,
+                    ">",
+                    "§e",
+                    "/music queue --page ${currentPage + 1}",
+                    LocalizedText.key("action.moemusic.queue.next_page"),
+                )
+            )
+        }
+        return footer
     }
 
     private fun remove(source: CommandSource, args: List<String>) {
@@ -748,13 +836,95 @@ class VelocityMusicCommand(
     }
 
     private fun choices(source: CommandSource, entries: List<SelectionEntry>) {
+        val session = SelectionSessionManager.createSession(
+            ownerUserId = user(source)?.id,
+            sourceId = entries.firstOrNull()?.sourceId.orEmpty(),
+            entries = entries,
+        )
+        renderChoicesPage(source, entries.take(8), session.id, 1, entries.size, 0, intro = LocalizedText.key("action.moemusic.selection.choose_prompt"))
+    }
+
+    private fun choicesCommand(source: CommandSource, sessionId: String, page: Int) {
+        if (!require(source, PermissionNodes.SUBMIT)) return
+        val u = user(source)
+        val bypass = u?.let { hasPermission(source, PermissionNodes.QUEUE_CONTROL) } ?: true
+        val session = SelectionSessionManager.getSession(sessionId, u?.id, bypass)
+        if (session == null) {
+            VelocityChat.failure(source, LocalizedText.key("error.moemusic.selection.session_expired"))
+            return
+        }
+        val total = session.entries.size
+        if (total == 0) {
+            VelocityChat.failure(source, LocalizedText.key("error.moemusic.selection.session_expired"))
+            return
+        }
+        val pageSize = 8
+        val totalPages = ((total - 1) / pageSize) + 1
+        val clampedPage = page.coerceIn(1, totalPages)
+        val offset = (clampedPage - 1) * pageSize
+        val slice = session.entries.drop(offset).take(pageSize)
+        renderChoicesPage(source, slice, session.id, clampedPage, total, offset)
+    }
+
+    private fun renderChoicesPage(
+        source: CommandSource,
+        entries: List<SelectionEntry>,
+        sessionId: String,
+        currentPage: Int,
+        totalChoices: Int,
+        offset: Int,
+        intro: LocalizedText? = null,
+    ) {
         val canBypass = hasPermission(source, PermissionNodes.CONTENT_FILTER_BYPASS)
         val canSeeDetail = hasPermission(source, PermissionNodes.CONTENT_FILTER_MANAGE)
+        val pageSize = 8
+        val totalPages = if (totalChoices == 0) 1 else ((totalChoices - 1) / pageSize) + 1
         VelocityChat.multiline(source, buildList {
-            add(prefixed(source, LocalizedText.key("action.moemusic.selection.choose_prompt")))
-            add(prefixed(source, LocalizedText.key("action.moemusic.selection.header", entries.size)))
-            entries.forEachIndexed { index, entry -> add(selectionLine(source, index, entry, canBypass, canSeeDetail)) }
+            intro?.let { add(prefixed(source, it)) }
+            if (totalPages > 1) {
+                add(prefixed(source, LocalizedText.key("action.moemusic.selection.header_paged", totalChoices, currentPage, totalPages)))
+            } else {
+                add(prefixed(source, LocalizedText.key("action.moemusic.selection.header", totalChoices)))
+            }
+            entries.forEachIndexed { index, entry -> add(selectionLine(source, offset + index, entry, canBypass, canSeeDetail)) }
+            if (totalPages > 1) {
+                choicesPaginationFooter(source, sessionId, currentPage, totalPages)?.let(::add)
+            }
         })
+    }
+
+    private fun choicesPaginationFooter(
+        source: CommandSource,
+        sessionId: String,
+        currentPage: Int,
+        totalPages: Int,
+    ): Component? {
+        if (totalPages <= 1) return null
+        var footer = VelocityChat.legacy("  ")
+        if (currentPage > 1) {
+            footer = footer.append(
+                VelocityChat.action(
+                    source,
+                    "<",
+                    "§e",
+                    "/music choices \"$sessionId\" ${currentPage - 1}",
+                    LocalizedText.key("action.moemusic.selection.prev_page"),
+                )
+            ).append(VelocityChat.legacy(" "))
+        }
+        footer = footer.append(VelocityChat.legacy("§8(§7$currentPage§8 / §7$totalPages§8)"))
+        if (currentPage < totalPages) {
+            footer = footer.append(VelocityChat.legacy(" ")).append(
+                VelocityChat.action(
+                    source,
+                    ">",
+                    "§e",
+                    "/music choices \"$sessionId\" ${currentPage + 1}",
+                    LocalizedText.key("action.moemusic.selection.next_page"),
+                )
+            )
+        }
+        return footer
     }
 
     private fun queueLine(source: CommandSource, index: Int?, track: TrackInfo, current: Boolean): Component {
