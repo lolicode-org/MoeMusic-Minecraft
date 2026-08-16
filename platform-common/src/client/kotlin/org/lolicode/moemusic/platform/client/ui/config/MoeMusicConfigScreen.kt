@@ -1324,6 +1324,17 @@ object MoeMusicConfigScreen {
             )
                 .setDefaultValue(defaultValue)
                 .setTooltip(McText.translatable("config.moemusic.permissions.level.tooltip"))
+                .setTextGetter { value ->
+                    when (value) {
+                        0 -> McText.translatable("config.moemusic.permissions.level.0")
+                        1 -> McText.translatable("config.moemusic.permissions.level.1")
+                        2 -> McText.translatable("config.moemusic.permissions.level.2")
+                        3 -> McText.translatable("config.moemusic.permissions.level.3")
+                        4 -> McText.translatable("config.moemusic.permissions.level.4")
+                        5 -> McText.translatable("config.moemusic.permissions.level.5")
+                        else -> McText.literal(value.toString())
+                    }
+                }
                 .setSaveConsumer(saveConsumer)
                 .build()
         )

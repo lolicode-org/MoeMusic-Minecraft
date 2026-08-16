@@ -258,7 +258,7 @@ MoeMusic 通过不同的 Git 分支支持多个 Minecraft 版本。当前的默�
 
 ## 权限节点
 
-在未安装 LuckPerms 或 Fabric Permissions API 时，MoeMusic 将回退使用 `moemusic.toml` 中定义的原版 OP 等级。单人游戏世界拥有者和服务器控制台可直接跳过所有权限检查。
+在未安装 LuckPerms 或 Fabric Permissions API 时，MoeMusic 将回退使用 `moemusic.toml` 中定义的回退权限等级（0–5 级）。0–4 级对应原版 OP 等级（0 = 所有人，1 = 巡查员，2 = 游戏管理员，3 = 高级管理员，4 = 服主/OP）。将权限设置为 5 级时将对所有玩家默认禁用，仅可通过权限模组单独授权或在控制台执行。单人游戏房主（对应 0–4 级）和服务器控制台可直接跳过权限检查。
 
 | 权限节点 | 用途 | 默认 OP 等级 |
 | --- | --- | --- |

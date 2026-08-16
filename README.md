@@ -258,7 +258,7 @@ Configurations are written to `config/moemusic/moemusic.toml`.
 
 ## Permissions
 
-When LuckPerms or the Fabric Permissions API is not installed, MoeMusic falls back to vanilla OP levels defined in `moemusic.toml`. Single-player world owners and the server console bypass all checks.
+When LuckPerms or the Fabric Permissions API is not installed, MoeMusic falls back to fallback permission levels (0–5) defined in `moemusic.toml`. Levels 0–4 correspond to vanilla OP levels (0 = All, 1 = Mod, 2 = GM, 3 = Admin, 4 = OP). Setting a permission to level 5 completely disables it for all vanilla players, requiring a dedicated permission mod or the server console. Single-player world owners (for levels 0–4) and the server console bypass all checks.
 
 | Node | Purpose | Default Level |
 | --- | --- | --- |
