@@ -62,6 +62,7 @@ object ClientNetworkSetup {
             PacketIds.QUEUE_RESPONSE,
             PacketIds.UI_BOOTSTRAP_RESPONSE,
             PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.QUEUE_CLEAR_RESPONSE,
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         ).forEach { PlayPackets.registerClientChannel(Identifier.fromNamespaceAndPath(it.namespace, it.path)) }
@@ -79,6 +80,7 @@ object ClientNetworkSetup {
             PacketIds.QUEUE_REQUEST,
             PacketIds.UI_BOOTSTRAP_REQUEST,
             PacketIds.QUEUE_REMOVE_REQUEST,
+            PacketIds.QUEUE_CLEAR_REQUEST,
             PacketIds.PLAYBACK_CONTROL_REQUEST,
             PacketIds.CONTENT_FILTER_ACTION_REQUEST,
         ).forEach { PlayPackets.registerServerChannel(Identifier.fromNamespaceAndPath(it.namespace, it.path)) }
@@ -97,6 +99,7 @@ object ClientNetworkSetup {
             PacketIds.QUEUE_RESPONSE,
             PacketIds.UI_BOOTSTRAP_RESPONSE,
             PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.QUEUE_CLEAR_RESPONSE,
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         ).forEach { packetId ->
@@ -124,6 +127,7 @@ object ClientNetworkSetup {
             PacketIds.QUEUE_RESPONSE,
             PacketIds.UI_BOOTSTRAP_RESPONSE,
             PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.QUEUE_CLEAR_RESPONSE,
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         ).map { Identifier.fromNamespaceAndPath(it.namespace, it.path) }.toSet()

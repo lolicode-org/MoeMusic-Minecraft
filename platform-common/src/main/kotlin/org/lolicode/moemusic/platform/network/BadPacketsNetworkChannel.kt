@@ -15,6 +15,7 @@ import org.lolicode.moemusic.core.session.UserSessionRegistry
 import org.lolicode.moemusic.platform.player.MinecraftUser
 import org.lolicode.moemusic.platform.player.MinecraftUserRegistry
 import org.slf4j.LoggerFactory
+
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -59,6 +60,7 @@ class BadPacketsNetworkChannel(
             PacketIds.QUEUE_RESPONSE,
             PacketIds.UI_BOOTSTRAP_RESPONSE,
             PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.QUEUE_CLEAR_RESPONSE,
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         )
@@ -80,6 +82,7 @@ class BadPacketsNetworkChannel(
             PacketIds.QUEUE_REQUEST,
             PacketIds.UI_BOOTSTRAP_REQUEST,
             PacketIds.QUEUE_REMOVE_REQUEST,
+            PacketIds.QUEUE_CLEAR_REQUEST,
             PacketIds.PLAYBACK_CONTROL_REQUEST,
             PacketIds.CONTENT_FILTER_ACTION_REQUEST,
         )
@@ -127,7 +130,6 @@ class BadPacketsNetworkChannel(
         }
         PacketSender.c2s().send(packetId.toIdentifier(), FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
     }
-
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
         val entity = (user as? MinecraftUser)?.entity() ?: return
         if (!canSendDirectly(user, packetId)) {
@@ -302,6 +304,7 @@ class BadPacketsNetworkChannel(
             PacketIds.QUEUE_RESPONSE,
             PacketIds.UI_BOOTSTRAP_RESPONSE,
             PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.QUEUE_CLEAR_RESPONSE,
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         )
