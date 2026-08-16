@@ -63,7 +63,8 @@ class VelocityNetworkChannel(
             event.result = ForwardResult.handled()
             val player = event.source as? Player ?: return
             if (packetId !in C2S_IDS) return
-            if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
+            val session = UserSessionRegistry.session(player.uniqueId)
+            if (packetId != PacketIds.CLIENT_HANDSHAKE && session == null) {
                 plugin.logger.debug(
                     "Dropping packet {} from {} before the MoeMusic handshake.",
                     packetId,
@@ -84,7 +85,8 @@ class VelocityNetworkChannel(
                 return
             }
 
-            val sender = VelocityUsers.active(player.uniqueId)
+            val sender = session?.user as? VelocityUser
+                ?: VelocityUsers.active(player.uniqueId)
                 ?: VelocityUser.snapshot(
                     player,
                     Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)),
@@ -148,10 +150,11 @@ class VelocityNetworkChannel(
     }
 
     override fun sendToAllClients(packetId: PacketId, payload: ByteArray) {
-        val users = VelocityUsers.allActive()
-        val (modernUsers, legacyUsers) = users.partition { UserSessionRegistry.supportsFraming(it.id) }
+        val activeSessions = VelocityUsers.activePlayerSessions()
+        if (activeSessions.isEmpty()) return
+        val (modernSessions, legacySessions) = activeSessions.partition { it.supportsFraming }
 
-        if (modernUsers.isNotEmpty()) {
+        if (modernSessions.isNotEmpty()) {
             val singleFrame: ByteArray?
             val frames: List<ByteArray>?
             if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
@@ -184,8 +187,8 @@ class VelocityNetworkChannel(
                 } else {
                     val identifier = identifiers[packetId]
                     if (identifier != null) {
-                        modernUsers.forEach { user ->
-                            val player = plugin.proxy.getPlayer(user.id).orElse(null) ?: return@forEach
+                        modernSessions.forEach { session ->
+                            val player = plugin.proxy.getPlayer(session.user.id).orElse(null) ?: return@forEach
                             if (singleFrame != null) {
                                 send(player, identifier, packetId, singleFrame)
                             } else {
@@ -199,7 +202,7 @@ class VelocityNetworkChannel(
             }
         }
 
-        if (legacyUsers.isNotEmpty()) {
+        if (legacySessions.isNotEmpty()) {
             when (val result = VelocityPayloadPolicy.fit(
                 packetId,
                 payload,
@@ -207,11 +210,11 @@ class VelocityNetworkChannel(
             )) {
                 is VelocityPayloadPolicy.Result.Send -> {
                     logLyricsStripped(packetId, result)
-                    legacyUsers.forEach { user -> send(user.id, packetId, result.payload) }
+                    legacySessions.forEach { session -> send(session.user.id, packetId, result.payload) }
                 }
 
                 is VelocityPayloadPolicy.Result.Oversized ->
-                    handleOversized(packetId, result, legacyUsers.map { it.id })
+                    handleOversized(packetId, result, legacySessions.map { it.user.id })
             }
         }
     }

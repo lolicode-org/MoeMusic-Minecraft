@@ -16,7 +16,18 @@ object VelocityUsers {
             UserSessionRegistry.registerStandby(it, it.locale, protocolVersion)
         }
 
+    data class ActivePlayerSession(
+        val user: VelocityUser,
+        val supportsFraming: Boolean,
+    )
+
     fun active(id: UUID): VelocityUser? = UserSessionRegistry.getActive(id) as? VelocityUser
+
+    fun activePlayerSessions(): List<ActivePlayerSession> =
+        UserSessionRegistry.activeSessions().mapNotNull { session ->
+            val user = session.user as? VelocityUser ?: return@mapNotNull null
+            ActivePlayerSession(user, session.supportsFraming)
+        }
 
     fun allActive(): List<VelocityUser> = UserSessionRegistry.activeUsers().filterIsInstance<VelocityUser>()
 }
