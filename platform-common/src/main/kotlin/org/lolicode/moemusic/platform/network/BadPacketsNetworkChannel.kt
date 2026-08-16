@@ -17,6 +17,7 @@ import org.lolicode.moemusic.platform.player.MinecraftUserRegistry
 import org.slf4j.LoggerFactory
 
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * [NetworkChannel] implementation backed by bad packets.
@@ -86,7 +87,8 @@ class BadPacketsNetworkChannel(
             PlayPackets.registerServerReceiver(packetId.toIdentifier()) { ctx, buf ->
                 try {
                     val player = ctx.player()
-                    if (!allowsInboundPacket(packetId, player.uuid)) {
+                    val session = UserSessionRegistry.session(player.uuid)
+                    if (packetId != PacketIds.CLIENT_HANDSHAKE && session == null) {
                         logger.debug(
                             "Dropping packet {} from player {} before MoeMusic handshake.",
                             packetId,
@@ -101,7 +103,7 @@ class BadPacketsNetworkChannel(
                         )
                     } else {
                         val bytes = buf.readAvailableBytes()
-                        val sender = MinecraftUserRegistry.snapshot(player)
+                        val sender = session?.user as? MinecraftUser ?: MinecraftUserRegistry.snapshot(player)
                         packetRegistry.dispatch(packetId, bytes, sender)
                     }
 
@@ -134,16 +136,25 @@ class BadPacketsNetworkChannel(
             )
             return
         }
-        if (!UserSessionRegistry.supportsFraming(user.id) &&
-            payload.size > FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES
-        ) {
+        val framingEnabled = UserSessionRegistry.supportsFraming(user.id)
+        if (!framingEnabled && payload.size > FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES) {
             logger.warn("Dropping oversized legacy S2C packet {} (size={})", packetId, payload.size)
             return
         }
 
-        val frames = if (UserSessionRegistry.supportsFraming(user.id)) {
+        val identifier = packetId.toIdentifier()
+        if (!framingEnabled) {
             try {
-                FramedPayloadCodec.encode(payload)
+                PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+            } catch (e: Exception) {
+                logger.error("Failed to send packet {} to {}: {}", packetId, user.displayName, e.message, e)
+            }
+            return
+        }
+
+        if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
+            val frame = try {
+                FramedPayloadCodec.encodeSingle(payload)
             } catch (e: Exception) {
                 logger.error(
                     "Failed to encode framed packet {} (size={}) for client {}: {}",
@@ -154,13 +165,35 @@ class BadPacketsNetworkChannel(
                 )
                 return
             }
-        } else {
-            listOf(payload)
-        }
-        val identifier = packetId.toIdentifier()
-        for (frame in frames) {
             try {
                 PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+            } catch (e: Exception) {
+                logger.error("Failed to send packet {} to {}: {}", packetId, user.displayName, e.message, e)
+            }
+            return
+        }
+
+        val frames = try {
+            FramedPayloadCodec.encode(payload)
+        } catch (e: Exception) {
+            logger.error(
+                "Failed to encode framed packet {} (size={}) for client {}: {}",
+                packetId,
+                payload.size,
+                user.displayName,
+                e.message,
+            )
+            return
+        }
+        val sender = try {
+            PacketSender.s2c(entity)
+        } catch (e: Exception) {
+            logger.error("Failed to send packet {} to {}: {}", packetId, user.displayName, e.message, e)
+            return
+        }
+        for (frame in frames) {
+            try {
+                sender.send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
             } catch (e: Exception) {
                 logger.error("Failed to send packet {} to {}: {}", packetId, user.displayName, e.message, e)
             }
@@ -168,46 +201,69 @@ class BadPacketsNetworkChannel(
     }
 
     override fun sendToAllClients(packetId: PacketId, payload: ByteArray) {
+        val activeSessions = MinecraftUserRegistry.activePlayerSessions()
+        if (activeSessions.isEmpty()) return
         val identifier = packetId.toIdentifier()
-        val users = MinecraftUserRegistry.allActive()
-        val (modernUsers, legacyUsers) = users.partition { UserSessionRegistry.supportsFraming(it.id) }
+        val (modernSessions, legacySessions) = activeSessions.partition { it.supportsFraming }
 
-        if (modernUsers.isNotEmpty()) {
-            val frames = try {
-                FramedPayloadCodec.encode(payload)
-            } catch (e: Exception) {
-                logger.error(
-                    "Failed to encode framed broadcast packet {} (size={}): {}",
-                    packetId,
-                    payload.size,
-                    e.message,
-                )
-                null
+        if (modernSessions.isNotEmpty()) {
+            val singleFrame: ByteArray?
+            val frames: List<ByteArray>?
+            if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
+                singleFrame = try {
+                    FramedPayloadCodec.encodeSingle(payload)
+                } catch (e: Exception) {
+                    logger.error(
+                        "Failed to encode framed broadcast packet {} (size={}): {}",
+                        packetId,
+                        payload.size,
+                        e.message,
+                    )
+                    null
+                }
+                frames = null
+            } else {
+                singleFrame = null
+                frames = try {
+                    FramedPayloadCodec.encode(payload)
+                } catch (e: Exception) {
+                    logger.error(
+                        "Failed to encode framed broadcast packet {} (size={}): {}",
+                        packetId,
+                        payload.size,
+                        e.message,
+                    )
+                    null
+                }
             }
-            if (frames != null) {
-                for (user in modernUsers) {
+            if (singleFrame != null || frames != null) {
+                for (session in modernSessions) {
                     try {
-                        val entity = user.entity()
-                        for (frame in frames) {
-                            PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+                        val sender = PacketSender.s2c(session.user.entity())
+                        if (singleFrame != null) {
+                            sender.send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(singleFrame)))
+                        } else {
+                            for (frame in requireNotNull(frames)) {
+                                sender.send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(frame)))
+                            }
                         }
                     } catch (e: Exception) {
-                        logger.error("Failed to send broadcast packet {} to {}: {}", packetId, user.displayName, e.message, e)
+                        logger.error("Failed to send broadcast packet {} to {}: {}", packetId, session.user.displayName, e.message, e)
                     }
                 }
             }
         }
 
-        if (legacyUsers.isNotEmpty()) {
+        if (legacySessions.isNotEmpty()) {
             if (payload.size > FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES) {
                 logger.warn("Dropping oversized legacy S2C broadcast packet {} (size={})", packetId, payload.size)
             } else {
-                for (user in legacyUsers) {
+                for (session in legacySessions) {
                     try {
-                        val entity = user.entity()
-                        PacketSender.s2c(entity).send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
+                        val sender = PacketSender.s2c(session.user.entity())
+                        sender.send(identifier, FriendlyByteBuf(Unpooled.wrappedBuffer(payload)))
                     } catch (e: Exception) {
-                        logger.error("Failed to send broadcast packet {} to {}: {}", packetId, user.displayName, e.message, e)
+                        logger.error("Failed to send broadcast packet {} to {}: {}", packetId, session.user.displayName, e.message, e)
                     }
                 }
             }
@@ -221,7 +277,9 @@ class BadPacketsNetworkChannel(
     private fun canSendDirectly(user: MoeMusicUser, packetId: PacketId): Boolean =
         UserSessionRegistry.getActive(user.id) != null || allowsStandbyOrUnregisteredDirectSend(packetId)
 
-    private fun PacketId.toIdentifier(): Identifier = Identifier.fromNamespaceAndPath(namespace, path)
+    private val identifierCache = ConcurrentHashMap<PacketId, Identifier>()
+    private fun PacketId.toIdentifier(): Identifier =
+        identifierCache.computeIfAbsent(this) { Identifier.fromNamespaceAndPath(it.namespace, it.path) }
 
     private fun FriendlyByteBuf.readAvailableBytes(): ByteArray {
         val bytes = ByteArray(readableBytes())
