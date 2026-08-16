@@ -19,11 +19,15 @@ object NeoForgePermissionBridge {
         override fun hasPermission(
             source: CommandSourceStack,
             permission: String,
-            fallbackLevel: PermissionLevel,
+            fallbackLevel: PermissionLevel?,
         ): Boolean {
             val player = source.entity as? ServerPlayer
             return if (player == null) {
-                source.permissions().hasPermission(Permission.HasCommandLevel(fallbackLevel))
+                if (fallbackLevel != null) {
+                    source.permissions().hasPermission(Permission.HasCommandLevel(fallbackLevel))
+                } else {
+                    false
+                }
             } else {
                 hasPermission(player, permission, fallbackLevel)
             }
@@ -32,10 +36,10 @@ object NeoForgePermissionBridge {
         override fun hasPermission(
             player: ServerPlayer,
             permission: String,
-            fallbackLevel: PermissionLevel,
+            fallbackLevel: PermissionLevel?,
         ): Boolean {
             return permissionChecker?.hasPermission(player, permission)
-                ?: player.permissions().hasPermission(Permission.HasCommandLevel(fallbackLevel))
+                ?: (fallbackLevel != null && player.permissions().hasPermission(Permission.HasCommandLevel(fallbackLevel)))
         }
     }
 

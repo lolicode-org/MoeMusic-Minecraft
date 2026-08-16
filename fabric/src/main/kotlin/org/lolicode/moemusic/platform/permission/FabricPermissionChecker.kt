@@ -21,12 +21,20 @@ private object FabricPermissionChecker : AdvancedPermissionChecker {
     override fun hasPermission(
         source: CommandSourceStack,
         permission: String,
-        fallbackLevel: PermissionLevel,
-    ): Boolean = Permissions.check(source, permission, fallbackLevel)
+        fallbackLevel: PermissionLevel?,
+    ): Boolean = if (fallbackLevel != null) {
+        Permissions.check(source, permission, fallbackLevel)
+    } else {
+        Permissions.check(source, permission, false)
+    }
 
     override fun hasPermission(
         player: ServerPlayer,
         permission: String,
-        fallbackLevel: PermissionLevel,
-    ): Boolean = Permissions.check(player, permission, fallbackLevel)
+        fallbackLevel: PermissionLevel?,
+    ): Boolean = if (fallbackLevel != null) {
+        Permissions.check(player, permission, fallbackLevel)
+    } else {
+        Permissions.check(player, permission, false)
+    }
 }
