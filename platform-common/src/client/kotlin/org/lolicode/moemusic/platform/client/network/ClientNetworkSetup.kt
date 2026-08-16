@@ -13,6 +13,8 @@ import net.minecraft.resources.ResourceLocation
 import org.lolicode.moemusic.client.mixin.MixinBadPacketsAbstractPacketHandler
 import org.lolicode.moemusic.core.protocol.PacketId
 import org.lolicode.moemusic.core.protocol.PacketIds
+import org.lolicode.moemusic.core.transport.FramedPayloadCodec
+
 import org.lolicode.moemusic.platform.client.playback.ClientPlaybackHandler
 import org.slf4j.LoggerFactory
 import kotlin.time.Duration.Companion.milliseconds
@@ -166,7 +168,9 @@ object ClientNetworkSetup {
             ResourceLocation.fromNamespaceAndPath(id.namespace, id.path)
         ) { _, buf ->
             try {
-                if (ClientPlaybackHandler.acceptsServerPacket(id)) {
+                if (buf.readableBytes() > FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES) {
+                    logger.debug("Dropping oversized S2C packet {} (size={})", id, buf.readableBytes())
+                } else if (ClientPlaybackHandler.acceptsServerPacket(id)) {
                     handler(buf)
                 } else {
                     logger.debug("Dropping packet {} before accepted MoeMusic server handshake.", id)
