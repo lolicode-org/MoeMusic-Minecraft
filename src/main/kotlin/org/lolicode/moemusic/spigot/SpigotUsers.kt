@@ -16,7 +16,18 @@ object SpigotUsers {
             UserSessionRegistry.registerStandby(it, it.locale, protocolVersion)
         }
 
+    data class ActivePlayerSession(
+        val user: SpigotUser,
+        val supportsFraming: Boolean,
+    )
+
     fun active(id: UUID): SpigotUser? = UserSessionRegistry.getActive(id) as? SpigotUser
+
+    fun activePlayerSessions(): List<ActivePlayerSession> =
+        UserSessionRegistry.activeSessions().mapNotNull { session ->
+            val user = session.user as? SpigotUser ?: return@mapNotNull null
+            ActivePlayerSession(user, session.supportsFraming)
+        }
 
     fun allActive(): List<SpigotUser> = UserSessionRegistry.activeUsers().filterIsInstance<SpigotUser>()
 }

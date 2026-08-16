@@ -61,7 +61,8 @@ class SpigotNetworkChannel(
     override fun onPluginMessageReceived(channel: String, player: Player, message: ByteArray) {
         try {
             val packetId = byChannel[channel] ?: return
-            if (packetId != PacketIds.CLIENT_HANDSHAKE && UserSessionRegistry.session(player.uniqueId) == null) {
+            val session = UserSessionRegistry.session(player.uniqueId)
+            if (packetId != PacketIds.CLIENT_HANDSHAKE && session == null) {
                 if (plugin.logger.isLoggable(Level.FINE)) {
                     plugin.logger.fine(
                         "Dropping packet $packetId from ${player.uniqueId} before the MoeMusic handshake.",
@@ -77,7 +78,8 @@ class SpigotNetworkChannel(
                 return
             }
 
-            val sender = SpigotUsers.active(player.uniqueId)
+            val sender = session?.user as? SpigotUser
+                ?: SpigotUsers.active(player.uniqueId)
                 ?: SpigotUser.snapshot(player, Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)))
             registry.dispatch(packetId, message, sender)
         } catch (e: Exception) {
@@ -90,6 +92,18 @@ class SpigotNetworkChannel(
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
         if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) return
         if (UserSessionRegistry.supportsFraming(user.id)) {
+            if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
+                val frame = try {
+                    FramedPayloadCodec.encodeSingle(payload)
+                } catch (e: Exception) {
+                    plugin.logger.severe(
+                        "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                    )
+                    return
+                }
+                send(user.id, packetId, frame)
+                return
+            }
             val frames = try {
                 FramedPayloadCodec.encode(payload)
             } catch (e: Exception) {
@@ -122,20 +136,36 @@ class SpigotNetworkChannel(
     }
 
     override fun sendToAllClients(packetId: PacketId, payload: ByteArray) {
-        val users = SpigotUsers.allActive()
-        val (modernUsers, legacyUsers) = users.partition { UserSessionRegistry.supportsFraming(it.id) }
+        val activeSessions = SpigotUsers.activePlayerSessions()
+        if (activeSessions.isEmpty()) return
+        val (modernSessions, legacySessions) = activeSessions.partition { it.supportsFraming }
 
-        if (modernUsers.isNotEmpty()) {
-            val frames = try {
-                FramedPayloadCodec.encode(payload)
-            } catch (e: Exception) {
-                plugin.logger.severe(
-                    "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
-                )
-                null
+        if (modernSessions.isNotEmpty()) {
+            val singleFrame: ByteArray?
+            val frames: List<ByteArray>?
+            if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
+                singleFrame = try {
+                    FramedPayloadCodec.encodeSingle(payload)
+                } catch (e: Exception) {
+                    plugin.logger.severe(
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                    )
+                    null
+                }
+                frames = null
+            } else {
+                singleFrame = null
+                frames = try {
+                    FramedPayloadCodec.encode(payload)
+                } catch (e: Exception) {
+                    plugin.logger.severe(
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                    )
+                    null
+                }
             }
-            if (frames != null) {
-                if (frames.any { it.size > maxPayloadSize }) {
+            if (singleFrame != null || frames != null) {
+                if (frames?.any { it.size > maxPayloadSize } == true) {
                     // Note: This drops the broadcast without triggering the Oversized track skip fallback.
                     // However, FramedPayloadCodec strictly bounds chunk frames to ~30 KB. This branch will 
                     // only ever be hit if a custom Spigot server forces maxPayloadSize below ~30 KB, 
@@ -145,14 +175,18 @@ class SpigotNetworkChannel(
                             "$maxPayloadSize-byte plugin-message limit.",
                     )
                 } else {
-                    modernUsers.forEach { user ->
-                        frames.forEach { frame -> send(user.id, packetId, frame) }
+                    modernSessions.forEach { session ->
+                        if (singleFrame != null) {
+                            send(session.user.id, packetId, singleFrame)
+                        } else {
+                            requireNotNull(frames).forEach { frame -> send(session.user.id, packetId, frame) }
+                        }
                     }
                 }
             }
         }
 
-        if (legacyUsers.isNotEmpty()) {
+        if (legacySessions.isNotEmpty()) {
             when (val result = SpigotPayloadPolicy.fit(
                 packetId,
                 payload,
@@ -160,9 +194,9 @@ class SpigotNetworkChannel(
             )) {
                 is SpigotPayloadPolicy.Result.Send -> {
                     logLyricsStripped(packetId, result)
-                    legacyUsers.forEach { send(it.id, packetId, result.payload) }
+                    legacySessions.forEach { session -> send(session.user.id, packetId, result.payload) }
                 }
-                is SpigotPayloadPolicy.Result.Oversized -> handleOversized(packetId, result, legacyUsers.map { it.id })
+                is SpigotPayloadPolicy.Result.Oversized -> handleOversized(packetId, result, legacySessions.map { it.user.id })
             }
         }
     }
