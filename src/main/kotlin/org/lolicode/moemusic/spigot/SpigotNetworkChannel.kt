@@ -33,10 +33,16 @@ class SpigotNetworkChannel(
         Messenger::class.java.getField("MAX_MESSAGE_SIZE").getInt(null)
     }.getOrElse {
         plugin.logger.warning("Could not read Spigot's plugin-message limit; using the 1.18.2 limit.")
-        LEGACY_MAX_PAYLOAD_SIZE
+        FramedPayloadCodec.MAX_LEGACY_C2S_PAYLOAD_BYTES
     }
 
+
     fun register() {
+        require(maxPayloadSize >= FramedPayloadCodec.MAX_CHUNK_FRAME_BYTES) {
+            "Spigot plugin-message limit $maxPayloadSize is below required v3 chunk frame size " +
+                FramedPayloadCodec.MAX_CHUNK_FRAME_BYTES
+        }
+
         val messenger = plugin.server.messenger
         S2C_IDS.forEach { messenger.registerOutgoingPluginChannel(plugin, it.toChannelKey()) }
         C2S_IDS.forEach { messenger.registerIncomingPluginChannel(plugin, it.toChannelKey(), this) }
@@ -63,6 +69,14 @@ class SpigotNetworkChannel(
                 }
                 return
             }
+            val inboundLimit = minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_C2S_PAYLOAD_BYTES)
+            if (message.size > inboundLimit) {
+                plugin.logger.warning(
+                    "Dropping oversized C2S packet $packetId from ${player.uniqueId} (size=${message.size}, limit=$inboundLimit)",
+                )
+                return
+            }
+
             val sender = SpigotUsers.active(player.uniqueId)
                 ?: SpigotUser.snapshot(player, Localization.resolveLocale(UserSessionRegistry.localeFor(player.uniqueId)))
             registry.dispatch(packetId, message, sender)
@@ -94,7 +108,11 @@ class SpigotNetworkChannel(
             frames.forEach { frame -> send(user.id, packetId, frame) }
             return
         }
-        when (val result = SpigotPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
+        when (val result = SpigotPayloadPolicy.fit(
+            packetId,
+            payload,
+            minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES),
+        )) {
             is SpigotPayloadPolicy.Result.Send -> {
                 logLyricsStripped(packetId, result)
                 send(user.id, packetId, result.payload)
@@ -135,7 +153,11 @@ class SpigotNetworkChannel(
         }
 
         if (legacyUsers.isNotEmpty()) {
-            when (val result = SpigotPayloadPolicy.fit(packetId, payload, maxPayloadSize)) {
+            when (val result = SpigotPayloadPolicy.fit(
+                packetId,
+                payload,
+                minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_S2C_PAYLOAD_BYTES),
+            )) {
                 is SpigotPayloadPolicy.Result.Send -> {
                     logLyricsStripped(packetId, result)
                     legacyUsers.forEach { send(it.id, packetId, result.payload) }
@@ -243,7 +265,6 @@ class SpigotNetworkChannel(
     private val SessionBridge = SessionBridgeImpl()
 
     companion object {
-        private const val LEGACY_MAX_PAYLOAD_SIZE = 32_766
 
         private val C2S_IDS = setOf(
             PacketIds.CLIENT_HANDSHAKE,
