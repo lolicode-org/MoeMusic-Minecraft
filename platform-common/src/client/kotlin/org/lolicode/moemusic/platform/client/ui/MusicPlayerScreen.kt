@@ -10,7 +10,7 @@ import net.minecraft.client.gui.screens.Screen
 import net.minecraft.network.chat.Component
 import org.lolicode.moemusic.api.LocalizedText
 import org.lolicode.moemusic.api.model.*
-import org.lolicode.moemusic.clientcore.playback.CachedSearchState
+import org.lolicode.moemusic.clientcore.playback.CachedSearchTabState
 import org.lolicode.moemusic.clientcore.playback.SearchSourceInfo
 import org.lolicode.moemusic.core.config.ClientVolume
 import org.lolicode.moemusic.core.config.ContentFilterClientListMode
@@ -144,6 +144,8 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     private var searchHiddenCount = 0
     private var pendingSearchRequestId: Long? = null
     private var deferredSearchAbsoluteOffset: Int? = null
+    private var selectionSessionId: String? = null
+    private var pendingSelectionPageRequestId: Long? = null
 
     // -------------------------------------------------------------------------
     // Queue state
@@ -155,6 +157,9 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     private var queueSuccess: String? = null
     private var queueHiddenCount = 0
     private var queueScrollOffset = 0
+    private var queueLoading = false
+    private var queueTotal: Int = 0
+    private var queueHasMore: Boolean = false
     private var pendingQueueRequestId: Long? = null
     private var pendingUiBootstrapRequestId: Long? = null
     private var pendingTrackSubmitOrigin: TrackListVariant? = null
@@ -275,12 +280,24 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         }
         ClientPlaybackHandler.guiListener = this
 
-        syncSelectedSearchSource(ClientPlaybackHandler.cachedSearchState?.sourceId)
-        restoreCachedSearchState()
+        syncSelectedSearchSource(ClientPlaybackHandler.cachedSearchTabState?.sourceId)
+        restoreCachedSearchTabState()
         ClientPlaybackHandler.lastQueueResponse?.let { resp ->
-            applyQueueSnapshot(resp.tracks.map { it.toApi() }, resp.failure.ifEmpty { null })
+            applyQueueSnapshot(
+                tracks = resp.tracks.map { it.toApi() },
+                failure = resp.failure.ifEmpty { null },
+                offset = resp.offset,
+                total = resp.total,
+                hasMore = resp.has_more,
+            )
         } ?: ClientPlaybackHandler.lastUiBootstrapResponse?.let { resp ->
-            applyQueueSnapshot(resp.tracks.map { it.toApi() }, resp.failure.ifEmpty { null })
+            applyQueueSnapshot(
+                tracks = resp.tracks.map { it.toApi() },
+                failure = resp.failure.ifEmpty { null },
+                offset = resp.queue_offset,
+                total = resp.queue_total,
+                hasMore = resp.queue_has_more,
+            )
         }
         ClientPlaybackHandler.lastTrackSubmitResponse?.let(::onTrackSubmitResponse)
         ClientPlaybackHandler.lastQueueRemoveResponse?.let(::onQueueRemoveResponse)
@@ -294,7 +311,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         }
         ClientPlaybackHandler.lastInstanceLockMessage?.let(::onInstancePlaybackStandby)
 
-        pendingUiBootstrapRequestId = ClientPlaybackHandler.sendUiBootstrapRequest()
+        pendingUiBootstrapRequestId = ClientPlaybackHandler.sendUiBootstrapRequest(queueLimit = QUEUE_PAGE_SIZE)
         rebuildScreenWidgets()
     }
 
@@ -332,21 +349,22 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         addRowActionMenuWidgets()
     }
 
-    private fun restoreCachedSearchState() {
-        val cached = ClientPlaybackHandler.cachedSearchState ?: return
+    private fun restoreCachedSearchTabState() {
+        val cached = ClientPlaybackHandler.cachedSearchTabState ?: return
         searchInputText = cached.query
 
         val selectableIds = searchableSources().mapTo(linkedSetOf()) { it.id }
-        val canRestoreResults = selectableIds.isEmpty() || cached.sourceId.isBlank() || cached.sourceId in selectableIds
+        val canRestoreResults = cached.selectionSessionId != null || selectableIds.isEmpty() || cached.sourceId.isBlank() || cached.sourceId in selectableIds
         if (!canRestoreResults) return
 
         searchQuery = cached.query
         rawSearchResults = cached.entries
-        applyClientSearchFilter()
+        selectionSessionId = cached.selectionSessionId
         searchError = cached.failure
         searchTotal = cached.total
         searchHasMore = cached.hasMore
         searchResultSourceId = cached.sourceId.ifBlank { currentSelectedSearchSourceId().orEmpty() }
+        applyClientSearchFilter()
     }
 
     private fun syncDraftInputsFromWidgets() {
@@ -357,6 +375,8 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     private fun visibleSearchRows(): Int = visibleRows(searchRowH)
 
     private fun effectiveSearchTotalCount(): Int = when {
+        searchTotal > 0 -> searchTotal
+        searchTotal == 0 && rawSearchResults.isNotEmpty() -> rawSearchResults.size
         searchTotal >= 0 -> searchTotal
         rawSearchResults.isNotEmpty() -> rawSearchResults.size
         else -> 0
@@ -384,15 +404,21 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
             return
         }
         val normalizedOffset = offset.coerceAtLeast(0)
-        searchLoading = true
-        searchActionError = null
-        searchActionSuccess = null
-        pendingSearchRequestId = ClientPlaybackHandler.sendSearchRequest(
+        val reqId = ClientPlaybackHandler.sendSearchRequest(
             query,
             sourceId = sourceId,
             limit = SEARCH_PAGE_SIZE,
             offset = normalizedOffset,
         )
+        if (reqId != null) {
+            searchLoading = true
+            pendingSearchRequestId = reqId
+            searchActionError = null
+            searchActionSuccess = null
+        } else {
+            searchLoading = false
+            pendingSearchRequestId = null
+        }
     }
 
     private fun submitSearch(query: String) {
@@ -415,6 +441,23 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
 
     private fun requestMoreSearchResults() {
         if (!canLoadMoreSearchResults()) return
+        val sessionId = selectionSessionId
+        if (sessionId != null) {
+            searchActionError = null
+            searchActionSuccess = null
+            val reqId = ClientPlaybackHandler.sendSelectionPageRequest(
+                sessionId = sessionId,
+                offset = rawSearchResults.size,
+                limit = SEARCH_PAGE_SIZE,
+            )
+            if (reqId != null) {
+                searchLoading = true
+                pendingSelectionPageRequestId = reqId
+            } else {
+                searchLoading = false
+            }
+            return
+        }
         val sourceId = currentSelectedSearchSourceId() ?: return
         requestSearchPage(
             query = searchQuery,
@@ -423,18 +466,59 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         )
     }
 
-    private fun canLoadMoreSearchResults(): Boolean =
-        canSearch() &&
-                !searchLoading &&
+    private fun canLoadMoreSearchResults(): Boolean {
+        if (searchLoading) return false
+        if (selectionSessionId != null) {
+            return searchHasMore
+        }
+        return canSearch() &&
                 searchQuery.isNotBlank() &&
                 searchHasMore &&
                 searchResultSourceId.isNotBlank() &&
                 searchResultSourceId == currentSelectedSearchSourceId().orEmpty()
+    }
 
     private fun maybeLoadMoreSearchResults() {
-        if (!canLoadMoreSearchResults() || searchResults.isEmpty()) return
+        if (!canLoadMoreSearchResults()) return
+        if (searchResults.isEmpty()) {
+            if (rawSearchResults.isNotEmpty() && searchHasMore) {
+                requestMoreSearchResults()
+            }
+            return
+        }
         if (searchScrollOffset + visibleSearchRows() >= searchResults.size - SEARCH_PREFETCH_THRESHOLD) {
             requestMoreSearchResults()
+        }
+    }
+
+    private fun canLoadMoreQueueTracks(): Boolean =
+        !queueLoading &&
+                queueHasMore
+
+    private fun requestMoreQueueTracks() {
+        if (!canLoadMoreQueueTracks()) return
+        val reqId = ClientPlaybackHandler.sendQueueRequest(
+            limit = QUEUE_PAGE_SIZE,
+            offset = rawQueueTracks.size,
+        )
+        if (reqId != null) {
+            queueLoading = true
+            pendingQueueRequestId = reqId
+        } else {
+            queueLoading = false
+        }
+    }
+
+    private fun maybeLoadMoreQueueTracks() {
+        if (!canLoadMoreQueueTracks()) return
+        if (queueTracks.isEmpty()) {
+            if (rawQueueTracks.isNotEmpty() && queueHasMore) {
+                requestMoreQueueTracks()
+            }
+            return
+        }
+        if (queueScrollOffset + visibleQueueRows() >= queueTracks.size - QUEUE_PREFETCH_THRESHOLD) {
+            requestMoreQueueTracks()
         }
     }
 
@@ -496,8 +580,10 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         searchQuery = ""
         searchTotal = -1
         searchHasMore = false
+        selectionSessionId = null
         searchResultSourceId = ""
         pendingSearchRequestId = null
+        pendingSelectionPageRequestId = null
         deferredSearchAbsoluteOffset = null
         cacheSearchState()
     }
@@ -640,31 +726,66 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     private fun sourceDisplayName(sourceId: String?): String =
         sourceId?.takeIf { it.isNotBlank() }?.let(ClientPlaybackHandler::sourceDisplayName).orEmpty()
 
-    private fun applyQueueSnapshot(tracks: List<TrackInfo>, failure: String?) {
-        rawQueueTracks = tracks
+    private fun applyQueueSnapshot(
+        tracks: List<TrackInfo>,
+        failure: String?,
+        offset: Int = 0,
+        total: Int = tracks.size,
+        hasMore: Boolean = false,
+    ) {
+        if (offset == 0) {
+            rawQueueTracks = tracks
+        } else {
+            val newRaw = rawQueueTracks.toMutableList()
+            for ((i, track) in tracks.withIndex()) {
+                val idx = offset + i
+                if (idx < newRaw.size) {
+                    newRaw[idx] = track
+                } else {
+                    newRaw.add(track)
+                }
+            }
+            rawQueueTracks = newRaw
+        }
+        val effectiveTotal = if (total == 0 && tracks.isNotEmpty()) {
+            (offset + tracks.size).coerceAtLeast(rawQueueTracks.size)
+        } else {
+            total
+        }
+        if (effectiveTotal >= 0 && effectiveTotal < rawQueueTracks.size) {
+            rawQueueTracks = rawQueueTracks.take(effectiveTotal)
+        }
+        queueTotal = effectiveTotal
+        queueHasMore = hasMore
+        queueLoading = false
         queueError = failure
         applyClientQueueFilter()
         cacheSearchState()
     }
 
     private fun cacheSearchState() {
-        val state = if (searchQuery.isBlank() && searchResults.isEmpty() && searchError.isNullOrBlank()) {
+        val state = if (searchQuery.isBlank() && searchResults.isEmpty() && searchError.isNullOrBlank() && selectionSessionId == null) {
             null
         } else {
-            CachedSearchState(
+            CachedSearchTabState(
                 query = searchQuery,
                 sourceId = searchResultSourceId.ifBlank { currentSelectedSearchSourceId().orEmpty() },
                 entries = rawSearchResults,
                 total = searchTotal,
                 hasMore = searchHasMore,
                 failure = searchError,
+                selectionSessionId = selectionSessionId,
             )
         }
-        ClientPlaybackHandler.cacheSearchState(state)
+        ClientPlaybackHandler.cacheSearchTabState(state)
     }
 
     private fun applySelectionChoices(
         entries: List<SelectionEntry>,
+        sessionId: String? = null,
+        total: Int = entries.size,
+        hasMore: Boolean = false,
+        offset: Int = 0,
         successMessage: String?,
         switchToSearchTab: Boolean,
     ) {
@@ -672,15 +793,38 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         searchError = null
         searchActionError = null
         searchActionSuccess = successMessage
-        rawSearchResults = entries
-        applyClientSearchFilter()
+        if (offset == 0) {
+            rawSearchResults = entries
+        } else {
+            val newRaw = rawSearchResults.toMutableList()
+            for ((i, entry) in entries.withIndex()) {
+                val idx = offset + i
+                if (idx < newRaw.size) {
+                    newRaw[idx] = entry
+                } else {
+                    newRaw.add(entry)
+                }
+            }
+            rawSearchResults = newRaw
+        }
+        val effectiveTotal = if (total == 0 && entries.isNotEmpty()) {
+            (offset + entries.size).coerceAtLeast(rawSearchResults.size)
+        } else {
+            total
+        }
+        if (effectiveTotal >= 0 && effectiveTotal < rawSearchResults.size) {
+            rawSearchResults = rawSearchResults.take(effectiveTotal)
+        }
         searchScrollOffset = 0
         searchQuery = ""
-        searchTotal = entries.size
-        searchHasMore = false
+        selectionSessionId = sessionId
+        searchTotal = effectiveTotal
+        searchHasMore = hasMore
         searchResultSourceId = entries.firstOrNull()?.sourceId.orEmpty()
         pendingSearchRequestId = null
+        pendingSelectionPageRequestId = null
         deferredSearchAbsoluteOffset = null
+        applyClientSearchFilter()
         cacheSearchState()
         if (switchToSearchTab) {
             currentTab = Tab.SEARCH
@@ -693,6 +837,9 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     private fun applyClientSearchFilter() {
         searchResults = applySearchFilter(rawSearchResults)
         searchScrollOffset = searchScrollOffset.coerceIn(0, maxLoadedSearchScrollOffset())
+        if (searchResults.isEmpty() && rawSearchResults.isNotEmpty() && searchHasMore) {
+            maybeLoadMoreSearchResults()
+        }
     }
 
     private fun applyClientQueueFilter() {
@@ -720,6 +867,9 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         queueTracks = filteredTracks
         queueHiddenCount = hiddenCount
         queueScrollOffset = queueScrollOffset.coerceIn(0, (queueTracks.size - visibleQueueRows()).coerceAtLeast(0))
+        if (queueTracks.isEmpty() && rawQueueTracks.isNotEmpty() && queueHasMore) {
+            maybeLoadMoreQueueTracks()
+        }
     }
 
     private fun applySearchFilter(entries: List<SelectionEntry>): List<SelectionEntry> {
@@ -969,7 +1119,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         val refreshButton = Button.builder(McText.translatable("screen.moemusic.queue.refresh")) {
             queueError = null
             queueSuccess = null
-            pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest()
+            pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
         }.pos(margin, contentY).size(60, 16).build()
         refreshButton.active = canViewQueue()
         addRenderableWidget(refreshButton)
@@ -982,9 +1132,14 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
 
         val queueDownButton = Button.builder(McText.literal("▼")) {
             val maxQueueScroll = (queueTracks.size - visibleQueueRows()).coerceAtLeast(0)
-            queueScrollOffset = (queueScrollOffset + 1).coerceAtMost(maxQueueScroll)
+            if (queueScrollOffset < maxQueueScroll) {
+                queueScrollOffset = (queueScrollOffset + 1).coerceAtMost(maxQueueScroll)
+                maybeLoadMoreQueueTracks()
+            } else if (canLoadMoreQueueTracks()) {
+                requestMoreQueueTracks()
+            }
         }.pos(controller.x, controller.downButtonY).size(controller.width, listControllerBtnH).build()
-        queueDownButton.active = controller.maxOffset > 0
+        queueDownButton.active = controller.maxOffset > 0 || canLoadMoreQueueTracks()
         addRenderableWidget(queueDownButton)
     }
 
@@ -2093,6 +2248,9 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 val newOff = (queueScrollOffset + delta).coerceIn(0, max)
                 if (newOff != queueScrollOffset) {
                     queueScrollOffset = newOff
+                    maybeLoadMoreQueueTracks()
+                } else if (delta > 0 && canLoadMoreQueueTracks()) {
+                    requestMoreQueueTracks()
                 }
                 return true
             }
@@ -2214,6 +2372,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 TrackListVariant.SEARCH -> setSearchAbsoluteOffset(currentSearchAbsoluteOffset() + delta)
                 TrackListVariant.QUEUE -> {
                     queueScrollOffset = (queueScrollOffset + delta).coerceIn(0, layout.maxOffset)
+                    maybeLoadMoreQueueTracks()
                 }
             }
             return true
@@ -2233,7 +2392,10 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         val targetOffset = (ratio * layout.maxOffset.toFloat()).roundToInt().coerceIn(0, layout.maxOffset)
         when (variant) {
             TrackListVariant.SEARCH -> setSearchAbsoluteOffset(targetOffset)
-            TrackListVariant.QUEUE -> queueScrollOffset = targetOffset
+            TrackListVariant.QUEUE -> {
+                queueScrollOffset = targetOffset
+                maybeLoadMoreQueueTracks()
+            }
         }
     }
 
@@ -2556,7 +2718,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         Minecraft.getInstance().execute {
             rowActionMenu = null
             rowActionMenuLayout = null
-            syncSelectedSearchSource(ClientPlaybackHandler.cachedSearchState?.sourceId)
+            syncSelectedSearchSource(ClientPlaybackHandler.cachedSearchTabState?.sourceId)
             if (searchResultSourceId.isNotBlank() && searchResultSourceId != currentSelectedSearchSourceId().orEmpty()) {
                 clearDisplayedSearchState()
             }
@@ -2583,13 +2745,21 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 val pageTracks = response.entries.map { it.toApi() }
                 searchQuery = response.query
                 searchResultSourceId = response.source_id.ifBlank { currentSelectedSearchSourceId().orEmpty() }
-                searchTotal = response.total
+                val effectiveTotal = if (response.total == 0 && pageTracks.isNotEmpty()) {
+                    (response.offset + pageTracks.size).coerceAtLeast(pageTracks.size)
+                } else {
+                    response.total
+                }
+                searchTotal = effectiveTotal
                 searchHasMore = response.has_more
                 selectedSearchSourceId = searchResultSourceId
                 rawSearchResults = when {
                     response.offset <= 0 -> pageTracks
                     response.offset <= rawSearchResults.size -> rawSearchResults.take(response.offset) + pageTracks
                     else -> rawSearchResults + pageTracks
+                }
+                if (effectiveTotal >= 0 && effectiveTotal < rawSearchResults.size) {
+                    rawSearchResults = rawSearchResults.take(effectiveTotal)
                 }
                 applyClientSearchFilter()
                 cacheSearchState()
@@ -2614,7 +2784,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                     if (response.failure.isEmpty()) {
                         searchActionError = null
                         searchActionSuccess = response.success.ifEmpty { null }
-                        pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest()
+                        pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
                     } else {
                         searchActionSuccess = null
                         searchActionError = response.failure
@@ -2625,7 +2795,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                     if (response.failure.isEmpty()) {
                         queueError = null
                         queueSuccess = response.success.ifEmpty { null }
-                        pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest()
+                        pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
                     } else {
                         queueSuccess = null
                         queueError = response.failure
@@ -2646,6 +2816,10 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 addIdentifierSuccess = response.success.ifEmpty { null }
                 applySelectionChoices(
                     entries = response.choices.map { it.toApi() },
+                    sessionId = response.session_id.ifEmpty { null },
+                    total = response.total,
+                    hasMore = response.has_more,
+                    offset = response.offset,
                     successMessage = response.success.ifEmpty { null },
                     switchToSearchTab = true,
                 )
@@ -2653,7 +2827,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 addIdentifierError = null
                 addIdentifierSuccess = response.success.ifEmpty { null }
                 clearDisplayedSearchState()
-                pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest()
+                pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
             } else {
                 addIdentifierSuccess = null
                 addIdentifierError = response.failure
@@ -2668,16 +2842,59 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
             if (response.failure.isEmpty() && response.choices.isNotEmpty()) {
                 applySelectionChoices(
                     entries = response.choices.map { it.toApi() },
+                    sessionId = response.session_id.ifEmpty { null },
+                    total = response.total,
+                    hasMore = response.has_more,
+                    offset = response.offset,
                     successMessage = response.success.ifEmpty { null },
                     switchToSearchTab = false,
                 )
             } else if (response.failure.isEmpty()) {
                 searchActionError = null
                 searchActionSuccess = response.success.ifEmpty { null }
-                pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest()
+                pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
             } else {
                 searchActionSuccess = null
                 searchActionError = response.failure
+            }
+        }
+    }
+
+    override fun onSelectionPageResponse(response: SelectionPageResponse) {
+        Minecraft.getInstance().execute {
+            if (pendingSelectionPageRequestId != response.request_id) return@execute
+            pendingSelectionPageRequestId = null
+            searchLoading = false
+            if (response.failure.isEmpty()) {
+                val pageChoices = response.choices.map { it.toApi() }
+                selectionSessionId = response.session_id.ifEmpty { selectionSessionId }
+                val effectiveTotal = if (response.total == 0 && pageChoices.isNotEmpty()) {
+                    (response.offset + pageChoices.size).coerceAtLeast(pageChoices.size)
+                } else {
+                    response.total
+                }
+                searchTotal = effectiveTotal
+                searchHasMore = response.has_more
+                rawSearchResults = when {
+                    response.offset <= 0 -> pageChoices
+                    response.offset <= rawSearchResults.size -> rawSearchResults.take(response.offset) + pageChoices
+                    else -> rawSearchResults + pageChoices
+                }
+                if (effectiveTotal >= 0 && effectiveTotal < rawSearchResults.size) {
+                    rawSearchResults = rawSearchResults.take(effectiveTotal)
+                }
+                applyClientSearchFilter()
+                cacheSearchState()
+                if (!applyDeferredSearchAbsoluteOffsetIfNeeded()) {
+                    searchScrollOffset = searchScrollOffset.coerceIn(0, maxLoadedSearchScrollOffset())
+                    maybeLoadMoreSearchResults()
+                }
+            } else {
+                searchError = response.failure
+                deferredSearchAbsoluteOffset = null
+            }
+            if (currentTab == Tab.SEARCH) {
+                rebuildScreenWidgets()
             }
         }
     }
@@ -2688,8 +2905,15 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
             rowActionMenu = null
             rowActionMenuLayout = null
             pendingQueueRequestId = null
+            queueLoading = false
             if (response.failure.isEmpty()) {
-                applyQueueSnapshot(response.tracks.map { it.toApi() }, null)
+                applyQueueSnapshot(
+                    tracks = response.tracks.map { it.toApi() },
+                    failure = null,
+                    offset = response.offset,
+                    total = response.total,
+                    hasMore = response.has_more,
+                )
             } else {
                 queueError = response.failure
             }
@@ -2705,7 +2929,13 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
             rowActionMenu = null
             rowActionMenuLayout = null
             pendingUiBootstrapRequestId = null
-            applyQueueSnapshot(response.tracks.map { it.toApi() }, response.failure.ifEmpty { null })
+            applyQueueSnapshot(
+                tracks = response.tracks.map { it.toApi() },
+                failure = response.failure.ifEmpty { null },
+                offset = response.queue_offset,
+                total = response.queue_total,
+                hasMore = response.queue_has_more,
+            )
             rebuildScreenWidgets()
         }
     }
@@ -2720,7 +2950,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 queueError = response.failure
             } else {
                 queueError = null
-                pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest()
+                pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
             }
         }
     }
@@ -2824,7 +3054,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
             setFilterNotice(origin, success = serverFilterNotice(response.success), error = null)
             when (origin) {
                 TrackListVariant.SEARCH -> refreshSearchAfterServerFilterAction()
-                TrackListVariant.QUEUE -> pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest()
+                TrackListVariant.QUEUE -> pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
             }
             rebuildScreenWidgets()
         }
@@ -2840,6 +3070,15 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 playbackErrorFromLocalPlayback = false
             }
             if (currentTab == Tab.NOW_PLAYING || currentTab == Tab.QUEUE) {
+                rebuildScreenWidgets()
+            }
+        }
+    }
+
+    override fun onPlaybackSnapshotApplied() {
+        Minecraft.getInstance().execute {
+            pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
+            if (currentTab == Tab.QUEUE) {
                 rebuildScreenWidgets()
             }
         }
@@ -3040,5 +3279,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         val TITLE: Component = McText.translatable("screen.moemusic.title")
         private const val SEARCH_PAGE_SIZE = 20
         private const val SEARCH_PREFETCH_THRESHOLD = 2
+        private const val QUEUE_PAGE_SIZE = 20
+        private const val QUEUE_PREFETCH_THRESHOLD = 2
     }
 }
