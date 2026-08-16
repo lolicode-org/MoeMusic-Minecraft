@@ -24,8 +24,15 @@ private object ClientPlaybackTransport : ClientRequestTransport {
     ): Deferred<SearchResponse>? =
         ClientPlaybackHandler.beginSearchRequest(query, sourceId, limit, offset)
 
-    override fun beginQueueRequest(): Deferred<QueueResponse>? =
-        ClientPlaybackHandler.beginQueueRequest()
+    override fun beginQueueRequest(limit: Int, offset: Int): Deferred<QueueResponse>? =
+        ClientPlaybackHandler.beginQueueRequest(limit, offset)
+
+    override fun beginSelectionPageRequest(
+        sessionId: String,
+        offset: Int,
+        limit: Int,
+    ): Deferred<SelectionPageResponse>? =
+        ClientPlaybackHandler.beginSelectionPageRequest(sessionId, offset, limit)
 
     override fun beginQueueRemoveRequest(sourceId: String, trackId: String): Deferred<QueueRemoveResponse>? =
         ClientPlaybackHandler.beginQueueRemoveRequest(sourceId, trackId)
