@@ -297,13 +297,35 @@ class MusicCommand(
 
     private fun remove(sender: CommandSender, args: List<String>) {
         if (!require(sender, PermissionNodes.QUEUE_VIEW)) return
+        if (args.size == 2 && args[0] == "--entry") {
+            val entryId = unquote(args[1])
+            if (entryId.isBlank()) return Chat.failure(sender, LocalizedText.key("error.moemusic.track.bad_request"))
+            val outcome = ServerRuntimeCoordinator.userActionService.removeQueuedTrackByEntryId("", "", entryId, user(sender))
+            return when (outcome.result) {
+                QueueRemoveResult.REMOVED -> Chat.success(sender, LocalizedText.key("action.moemusic.queue.removed", entryId))
+                QueueRemoveResult.NOT_FOUND -> Chat.failure(sender, LocalizedText.key("error.moemusic.queue.track_not_found"))
+                QueueRemoveResult.FORBIDDEN -> Chat.failure(sender, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
+                else -> Chat.failure(sender, outcome.failure ?: LocalizedText.key("error.moemusic.internal"))
+            }
+        }
         if (args.size == 1) {
             val index = args[0].toIntOrNull() ?: return Chat.failure(sender, LocalizedText.key("error.moemusic.queue.invalid_index"))
             val track = ServerRuntimeCoordinator.queue.userQueueSnapshot().getOrNull(index - 1)
                 ?: return Chat.failure(sender, LocalizedText.key("error.moemusic.queue.invalid_index"))
-            return remove(sender, listOf(track.sourceId.orEmpty(), track.id))
+            val outcome = ServerRuntimeCoordinator.userActionService.removeQueuedTrackByEntryId(
+                track.sourceId.orEmpty(),
+                track.id,
+                track.queueEntryId,
+                user(sender),
+            )
+            return when (outcome.result) {
+                QueueRemoveResult.REMOVED -> Chat.success(sender, LocalizedText.key("action.moemusic.queue.removed", track.id))
+                QueueRemoveResult.NOT_FOUND -> Chat.failure(sender, LocalizedText.key("error.moemusic.queue.track_not_found"))
+                QueueRemoveResult.FORBIDDEN -> Chat.failure(sender, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
+                else -> Chat.failure(sender, outcome.failure ?: LocalizedText.key("error.moemusic.internal"))
+            }
         }
-        if (args.size < 2) return usage(sender, "remove <index> | <source> <trackId>")
+        if (args.size < 2) return usage(sender, "remove <index> | --entry <entryId> | <source> <trackId>")
         val sourceId = unquote(args[0])
         val trackId = args.drop(1).joinToString(" ").let(::unquote)
         if (sourceId.isBlank() || trackId.isBlank()) return Chat.failure(sender, LocalizedText.key("error.moemusic.track.bad_request"))
@@ -735,7 +757,7 @@ class MusicCommand(
             sender,
             "✕",
             "§c",
-            queueRemoveCommand(sourceId, track.id),
+            queueRemoveCommand(track),
             LocalizedText.key("action.moemusic.queue.remove_hover", track.title.ifBlank { track.id }),
         )
         return suffix
@@ -1017,6 +1039,10 @@ class MusicCommand(
 
     private fun queueRemoveCommand(sourceId: String, trackId: String): String =
         "/music remove ${quoteCommandToken(sourceId)} ${quoteCommandToken(trackId)}"
+
+    private fun queueRemoveCommand(track: TrackInfo): String =
+        track.queueEntryId?.let { "/music remove --entry ${quoteCommandToken(it)}" }
+            ?: queueRemoveCommand(track.sourceId.orEmpty(), track.id)
 
     private fun searchCommand(query: String, sourceId: String? = null, page: Int = 1): String {
         val base = buildString {
