@@ -42,6 +42,7 @@ import org.lolicode.moemusic.core.error.UserFacingErrors
 import org.lolicode.moemusic.core.permission.PermissionNodes
 import org.lolicode.moemusic.core.plugin.PluginManager
 import org.lolicode.moemusic.core.runtime.ServerRuntimeCoordinator
+import org.lolicode.moemusic.core.source.SelectionSessionManager
 import org.lolicode.moemusic.core.source.builtin.HttpMusicSource
 import java.util.Locale
 
@@ -66,7 +67,8 @@ class MusicCommand(
             "resume" -> control(sender, PlaybackAction.RESUME, "action.moemusic.playback.resumed")
             "skip", "next" -> control(sender, PlaybackAction.SKIP, "action.moemusic.playback.skipped")
             "stop" -> control(sender, PlaybackAction.STOP, "action.moemusic.playback.stopped")
-            "queue", "list" -> queue(sender)
+            "queue", "list" -> queue(sender, args.drop(1))
+            "choices" -> choicesCommand(sender, args.drop(1))
             "remove" -> remove(sender, args.drop(1))
             "search" -> search(sender, args.drop(1))
             "reload" -> reload(sender, args.drop(1))
@@ -219,23 +221,78 @@ class MusicCommand(
         }
     }
 
-    private fun queue(sender: CommandSender) {
+    private fun queue(sender: CommandSender, args: List<String> = emptyList()) {
         if (!require(sender, PermissionNodes.QUEUE_VIEW)) return
+        val parsedPage = when {
+            args.isEmpty() -> 1
+            args.size >= 2 && args[0].equals("--page", true) -> args[1].toIntOrNull() ?: 1
+            args.isNotEmpty() -> args[0].toIntOrNull() ?: 1
+            else -> 1
+        }
         val current = ServerRuntimeCoordinator.playbackController.currentContext?.track
         val queued = ServerRuntimeCoordinator.queue.userQueueSnapshot()
         if (current == null && queued.isEmpty()) return Chat.success(sender, LocalizedText.key("action.moemusic.queue.empty"))
+        val pageSize = 8
+        val total = queued.size
+        val totalPages = if (total == 0) 1 else ((total - 1) / pageSize) + 1
+        val clampedPage = parsedPage.coerceIn(1, totalPages)
+        val offset = (clampedPage - 1) * pageSize
+        val pageTracks = queued.drop(offset).take(pageSize)
         Chat.multiline(
             sender,
             buildList {
-                add(Chat.legacy(SpigotChatFormatting.prefixed(
-                    Chat.locale(sender),
-                    LocalizedText.key("action.moemusic.queue.header", queued.size + if (current == null) 0 else 1),
-                    SpigotChatFormatting.Tone.SUCCESS,
-                )))
-                current?.let { add(queueTrackLine(sender, null, it, isCurrent = true)) }
-                queued.forEachIndexed { index, track -> add(queueTrackLine(sender, index + 1, track, isCurrent = false)) }
+                if (totalPages > 1) {
+                    add(Chat.legacy(SpigotChatFormatting.prefixed(
+                        Chat.locale(sender),
+                        LocalizedText.key("action.moemusic.queue.header_paged", total, clampedPage, totalPages),
+                        SpigotChatFormatting.Tone.SUCCESS,
+                    )))
+                } else {
+                    add(Chat.legacy(SpigotChatFormatting.prefixed(
+                        Chat.locale(sender),
+                        LocalizedText.key("action.moemusic.queue.header", queued.size + if (current == null) 0 else 1),
+                        SpigotChatFormatting.Tone.SUCCESS,
+                    )))
+                }
+                if (clampedPage == 1) {
+                    current?.let { add(queueTrackLine(sender, null, it, isCurrent = true)) }
+                }
+                pageTracks.forEachIndexed { index, track -> add(queueTrackLine(sender, offset + index + 1, track, isCurrent = false)) }
+                queuePaginationFooter(sender, clampedPage, totalPages)?.let(::add)
             },
         )
+    }
+
+    private fun queuePaginationFooter(
+        sender: CommandSender,
+        currentPage: Int,
+        totalPages: Int,
+    ): List<BaseComponent>? {
+        if (totalPages <= 1) return null
+        val footer = mutableListOf<BaseComponent>()
+        footer += Chat.legacy("  ")
+        if (currentPage > 1) {
+            footer += Chat.action(
+                sender,
+                "<",
+                "§e",
+                "/music queue --page ${currentPage - 1}",
+                LocalizedText.key("action.moemusic.queue.prev_page"),
+            )
+            footer += Chat.legacy(" ")
+        }
+        footer += Chat.legacy("§8(§7$currentPage§8 / §7$totalPages§8)")
+        if (currentPage < totalPages) {
+            footer += Chat.legacy(" ")
+            footer += Chat.action(
+                sender,
+                ">",
+                "§e",
+                "/music queue --page ${currentPage + 1}",
+                LocalizedText.key("action.moemusic.queue.next_page"),
+            )
+        }
+        return footer
     }
 
     private fun remove(sender: CommandSender, args: List<String>) {
@@ -441,15 +498,99 @@ class MusicCommand(
     }
 
     private fun choices(sender: CommandSender, entries: List<SelectionEntry>, sourceId: String) {
+        val session = SelectionSessionManager.createSession(
+            ownerUserId = user(sender)?.id,
+            sourceId = sourceId,
+            entries = entries,
+        )
+        renderChoicesPage(sender, entries.take(8), session.id, 1, entries.size, 0, intro = LocalizedText.key("action.moemusic.selection.choose_prompt"))
+    }
+
+    private fun choicesCommand(sender: CommandSender, args: List<String>) {
+        if (!require(sender, PermissionNodes.SUBMIT)) return
+        if (args.isEmpty()) return usage(sender, "choices <sessionId> [page]")
+        val sessionId = unquote(args[0])
+        val page = args.getOrNull(1)?.toIntOrNull() ?: 1
+        val u = user(sender)
+        val bypass = u?.let { hasPermission(sender, PermissionNodes.QUEUE_CONTROL) } ?: true
+        val session = SelectionSessionManager.getSession(sessionId, u?.id, bypass)
+        if (session == null) {
+            Chat.failure(sender, LocalizedText.key("error.moemusic.selection.session_expired"))
+            return
+        }
+        val total = session.entries.size
+        if (total == 0) {
+            Chat.failure(sender, LocalizedText.key("error.moemusic.selection.session_expired"))
+            return
+        }
+        val pageSize = 8
+        val totalPages = ((total - 1) / pageSize) + 1
+        val clampedPage = page.coerceIn(1, totalPages)
+        val offset = (clampedPage - 1) * pageSize
+        val slice = session.entries.drop(offset).take(pageSize)
+        renderChoicesPage(sender, slice, session.id, clampedPage, total, offset)
+    }
+
+    private fun renderChoicesPage(
+        sender: CommandSender,
+        entries: List<SelectionEntry>,
+        sessionId: String,
+        currentPage: Int,
+        totalChoices: Int,
+        offset: Int,
+        intro: LocalizedText? = null,
+    ) {
         val canBypassFilter = hasPermission(sender, PermissionNodes.CONTENT_FILTER_BYPASS)
         val canSeeFilterDetail = hasPermission(sender, PermissionNodes.CONTENT_FILTER_MANAGE)
+        val pageSize = 8
+        val totalPages = if (totalChoices == 0) 1 else ((totalChoices - 1) / pageSize) + 1
         Chat.multiline(sender, buildList {
-            add(prefixed(sender, LocalizedText.key("action.moemusic.selection.choose_prompt")))
-            add(prefixed(sender, LocalizedText.key("action.moemusic.selection.header", entries.size)))
+            intro?.let { add(prefixed(sender, it)) }
+            if (totalPages > 1) {
+                add(prefixed(sender, LocalizedText.key("action.moemusic.selection.header_paged", totalChoices, currentPage, totalPages)))
+            } else {
+                add(prefixed(sender, LocalizedText.key("action.moemusic.selection.header", totalChoices)))
+            }
             entries.forEachIndexed { index, entry ->
-                add(selectionChoiceLine(sender, index, entry, canBypassFilter, canSeeFilterDetail))
+                add(selectionChoiceLine(sender, offset + index, entry, canBypassFilter, canSeeFilterDetail))
+            }
+            if (totalPages > 1) {
+                choicesPaginationFooter(sender, sessionId, currentPage, totalPages)?.let(::add)
             }
         })
+    }
+
+    private fun choicesPaginationFooter(
+        sender: CommandSender,
+        sessionId: String,
+        currentPage: Int,
+        totalPages: Int,
+    ): List<BaseComponent>? {
+        if (totalPages <= 1) return null
+        val footer = mutableListOf<BaseComponent>()
+        footer += Chat.legacy("  ")
+        if (currentPage > 1) {
+            footer += Chat.action(
+                sender,
+                "<",
+                "§e",
+                "/music choices \"$sessionId\" ${currentPage - 1}",
+                LocalizedText.key("action.moemusic.selection.prev_page"),
+            )
+            footer += Chat.legacy(" ")
+        }
+        footer += Chat.legacy("§8(§7$currentPage§8 / §7$totalPages§8)")
+        if (currentPage < totalPages) {
+            footer += Chat.legacy(" ")
+            footer += Chat.action(
+                sender,
+                ">",
+                "§e",
+                "/music choices \"$sessionId\" ${currentPage + 1}",
+                LocalizedText.key("action.moemusic.selection.next_page"),
+            )
+        }
+        return footer
     }
 
     private fun queueTrackLine(
