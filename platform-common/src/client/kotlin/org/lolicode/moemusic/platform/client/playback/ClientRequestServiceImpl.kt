@@ -37,6 +37,12 @@ private object ClientPlaybackTransport : ClientRequestTransport {
     override fun beginQueueRemoveRequest(sourceId: String, trackId: String, queueEntryId: String?): Deferred<QueueRemoveResponse>? =
         ClientPlaybackHandler.beginQueueRemoveRequest(sourceId, trackId, queueEntryId)
 
+    override fun beginQueueClearRequest(
+        scope: QueueClearScopeProto,
+        targetUserId: String?,
+    ): Deferred<QueueClearResponse>? =
+        ClientPlaybackHandler.beginQueueClearRequest(scope, targetUserId)
+
     override fun beginTrackSubmitRequest(track: TrackInfo, mode: TrackAddMode): Deferred<TrackSubmitResponse>? =
         ClientPlaybackHandler.beginTrackSubmitRequest(track, mode)
 
