@@ -102,6 +102,7 @@ class VelocityMusicCommand(
             .then(queueCommandNode("list"))
             .then(choicesCommandNode())
             .then(removeCommandNode())
+            .then(clearCommandNode())
             .then(searchCommandNode())
             .then(reloadCommandNode())
             .then(filterCommandNode())
@@ -218,6 +219,27 @@ class VelocityMusicCommand(
                 ),
             )
 
+    private fun clearCommandNode(): LiteralArgumentBuilder<CommandSource> =
+        BrigadierCommand.literalArgumentBuilder("clear")
+            .requires { source -> hasPermission(source, PermissionNodes.QUEUE_VIEW) }
+            .then(
+                BrigadierCommand.literalArgumentBuilder("--self")
+                    .executes { context -> executeClearSelf(context.source); Command.SINGLE_SUCCESS },
+            )
+            .then(
+                BrigadierCommand.literalArgumentBuilder("--all")
+                    .executes { context -> executeClearAll(context.source); Command.SINGLE_SUCCESS },
+            )
+            .then(
+                BrigadierCommand.requiredArgumentBuilder("target", StringArgumentType.string())
+                    .suggests { context, builder -> suggestClearTargets(context.source, builder) }
+                    .executes { context ->
+                        executeClearTarget(context.source, StringArgumentType.getString(context, "target"))
+                        Command.SINGLE_SUCCESS
+                    },
+            )
+            .executes { context -> executeClearSelf(context.source); Command.SINGLE_SUCCESS }
+
     private fun searchCommandNode(): LiteralArgumentBuilder<CommandSource> =
         BrigadierCommand.literalArgumentBuilder("search")
             .requires { source -> hasPermission(source, PermissionNodes.SEARCH) }
@@ -274,6 +296,7 @@ class VelocityMusicCommand(
                         Command.SINGLE_SUCCESS
                     }
             )
+            .then(clearCommandNode())
             .executes { context -> queue(context.source, 1); Command.SINGLE_SUCCESS }
 
     private fun choicesCommandNode(): LiteralArgumentBuilder<CommandSource> =
@@ -684,6 +707,95 @@ class VelocityMusicCommand(
             QueueRemoveResult.NOT_FOUND -> VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.track_not_found"))
             QueueRemoveResult.FORBIDDEN -> VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
             else -> VelocityChat.failure(source, outcome.failure ?: LocalizedText.key("error.moemusic.internal"))
+        }
+    }
+
+    private fun suggestClearTargets(
+        source: CommandSource,
+        builder: SuggestionsBuilder,
+    ): CompletableFuture<Suggestions> {
+        val remaining = builder.remaining.lowercase()
+        if ("--self".startsWith(remaining)) builder.suggest("--self")
+        if (hasPermission(source, PermissionNodes.QUEUE_CONTROL)) {
+            if ("--all".startsWith(remaining)) builder.suggest("--all")
+            plugin.proxy.allPlayers.forEach { player ->
+                if (player.username.lowercase().startsWith(remaining)) {
+                    builder.suggest(player.username)
+                }
+            }
+            ServerRuntimeCoordinator.queue.userQueueSnapshot().forEach { track ->
+                val name = track.submittedByUserName
+                if (!name.isNullOrBlank() && name.lowercase().startsWith(remaining)) {
+                    builder.suggest(name)
+                }
+            }
+        }
+        return builder.buildFuture()
+    }
+
+    private fun executeClearSelf(source: CommandSource) {
+        val player = source as? Player ?: return VelocityChat.failure(
+            source,
+            LocalizedText.key("error.moemusic.queue.clear_console_requires_target"),
+        )
+        val outcome = ServerRuntimeCoordinator.userActionService.clearQueue(
+            targetUserId = player.uniqueId,
+            targetUserName = player.username,
+            requester = user(source),
+        )
+        val failure = outcome.failure
+        if (failure != null) {
+            VelocityChat.failure(source, failure)
+        } else {
+            VelocityChat.success(source, LocalizedText.key("action.moemusic.queue.cleared_self", outcome.removedCount))
+        }
+    }
+
+    private fun executeClearAll(source: CommandSource) {
+        val outcome = ServerRuntimeCoordinator.userActionService.clearQueue(
+            targetUserId = null,
+            targetUserName = null,
+            requester = user(source),
+        )
+        val failure = outcome.failure
+        if (failure != null) {
+            VelocityChat.failure(source, failure)
+        } else {
+            VelocityChat.success(source, LocalizedText.key("action.moemusic.queue.cleared_all", outcome.removedCount))
+        }
+    }
+
+    private fun executeClearTarget(source: CommandSource, rawTarget: String) {
+        val target = unquote(rawTarget)
+        if (target.equals("--self", ignoreCase = true)) {
+            return executeClearSelf(source)
+        }
+        if (target.equals("--all", ignoreCase = true)) {
+            return executeClearAll(source)
+        }
+        val onlinePlayer = plugin.proxy.getPlayer(target).orElse(null)
+        val outcome = if (onlinePlayer != null) {
+            ServerRuntimeCoordinator.userActionService.clearQueue(
+                targetUserId = onlinePlayer.uniqueId,
+                targetUserName = onlinePlayer.username,
+                requester = user(source),
+            )
+        } else {
+            ServerRuntimeCoordinator.userActionService.clearQueue(
+                targetUserId = null,
+                targetUserName = target,
+                requester = user(source),
+            )
+        }
+        val failure = outcome.failure
+        if (failure != null) {
+            VelocityChat.failure(source, failure)
+        } else {
+            val displayName = onlinePlayer?.username ?: target
+            VelocityChat.success(
+                source,
+                LocalizedText.key("action.moemusic.queue.cleared_user", outcome.removedCount, displayName),
+            )
         }
     }
 

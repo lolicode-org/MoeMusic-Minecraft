@@ -339,6 +339,7 @@ class VelocityNetworkChannel(
             PacketIds.QUEUE_REQUEST,
             PacketIds.UI_BOOTSTRAP_REQUEST,
             PacketIds.QUEUE_REMOVE_REQUEST,
+            PacketIds.QUEUE_CLEAR_REQUEST,
             PacketIds.PLAYBACK_CONTROL_REQUEST,
             PacketIds.CONTENT_FILTER_ACTION_REQUEST,
         )
@@ -354,6 +355,7 @@ class VelocityNetworkChannel(
             PacketIds.QUEUE_RESPONSE,
             PacketIds.UI_BOOTSTRAP_RESPONSE,
             PacketIds.QUEUE_REMOVE_RESPONSE,
+            PacketIds.QUEUE_CLEAR_RESPONSE,
             PacketIds.PLAYBACK_CONTROL_RESPONSE,
             PacketIds.CONTENT_FILTER_ACTION_RESPONSE,
         )
