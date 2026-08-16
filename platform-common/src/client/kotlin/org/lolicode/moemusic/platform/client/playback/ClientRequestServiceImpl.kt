@@ -34,8 +34,8 @@ private object ClientPlaybackTransport : ClientRequestTransport {
     ): Deferred<SelectionPageResponse>? =
         ClientPlaybackHandler.beginSelectionPageRequest(sessionId, offset, limit)
 
-    override fun beginQueueRemoveRequest(sourceId: String, trackId: String): Deferred<QueueRemoveResponse>? =
-        ClientPlaybackHandler.beginQueueRemoveRequest(sourceId, trackId)
+    override fun beginQueueRemoveRequest(sourceId: String, trackId: String, queueEntryId: String?): Deferred<QueueRemoveResponse>? =
+        ClientPlaybackHandler.beginQueueRemoveRequest(sourceId, trackId, queueEntryId)
 
     override fun beginTrackSubmitRequest(track: TrackInfo, mode: TrackAddMode): Deferred<TrackSubmitResponse>? =
         ClientPlaybackHandler.beginTrackSubmitRequest(track, mode)

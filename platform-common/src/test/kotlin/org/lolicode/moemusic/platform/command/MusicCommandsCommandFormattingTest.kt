@@ -64,6 +64,26 @@ class MusicCommandsCommandFormattingTest {
     }
 
     @Test
+    fun `queueRemoveCommand formats --entry when track has queueEntryId`() {
+        val trackWithEntry = TrackInfo("track-1", "Track One", emptyList(), 120_000L) {
+            sourceId = "youtube"
+            queueEntryId = "entry-1234"
+        }
+        assertEquals("/music remove --entry entry-1234", MusicCommands.queueRemoveCommand(trackWithEntry))
+
+        val trackWithOpaqueEntry = TrackInfo("track-2", "Track Two", emptyList(), 120_000L) {
+            sourceId = "youtube"
+            queueEntryId = "entry with space"
+        }
+        assertEquals("/music remove --entry \"entry with space\"", MusicCommands.queueRemoveCommand(trackWithOpaqueEntry))
+
+        val trackWithoutEntry = TrackInfo("track-3", "Track Three", emptyList(), 120_000L) {
+            sourceId = "youtube"
+        }
+        assertEquals("/music remove youtube track-3", MusicCommands.queueRemoveCommand(trackWithoutEntry))
+    }
+
+    @Test
     fun `trackSubmitCommand quotes opaque ids and appends mode flags after the track id`() {
         assertEquals("/music addById source track-id", MusicCommands.trackSubmitCommand("source", "track-id"))
         assertEquals(
