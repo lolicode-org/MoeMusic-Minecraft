@@ -58,7 +58,18 @@ object MinecraftUserRegistry {
         logger.debug("MinecraftUserRegistry: {} left ({})", user.displayName, user.id)
     }
 
+    data class ActivePlayerSession(
+        val user: MinecraftUser,
+        val supportsFraming: Boolean,
+    )
+
     fun getActive(uuid: UUID): MinecraftUser? = UserSessionRegistry.getActive(uuid) as? MinecraftUser
+
+    fun activePlayerSessions(): List<ActivePlayerSession> =
+        UserSessionRegistry.activeSessions().mapNotNull { session ->
+            val mcUser = session.user as? MinecraftUser ?: return@mapNotNull null
+            ActivePlayerSession(mcUser, session.supportsFraming)
+        }
 
     fun allActive(): Collection<MinecraftUser> =
         UserSessionRegistry.activeUsers().filterIsInstance<MinecraftUser>()
