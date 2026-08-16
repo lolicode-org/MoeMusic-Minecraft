@@ -53,6 +53,7 @@ object ClientPlaybackHandler {
         fun onTrackSubmitResponse(response: TrackSubmitResponse) {}
         fun onIdentifierSubmitResponse(response: IdentifierSubmitResponse) {}
         fun onSelectionSubmitResponse(response: SelectionSubmitResponse) {}
+        fun onSelectionPageResponse(response: SelectionPageResponse) {}
         fun onQueueResponse(response: QueueResponse) {}
         fun onQueueRemoveResponse(response: QueueRemoveResponse) {}
         fun onPlaybackControlResponse(response: PlaybackControlResponse) {}
@@ -63,6 +64,7 @@ object ClientPlaybackHandler {
         fun onLocalPlaybackFailed(message: String) {}
         fun onInstancePlaybackStandby(message: String?) {}
         fun onPlaybackStateChanged() {}
+        fun onPlaybackSnapshotApplied() {}
     }
 
     val serverClockOffset: Long
@@ -74,8 +76,8 @@ object ClientPlaybackHandler {
     val lastSearchResponse: SearchResponse?
         get() = runtime.lastSearchResponse
 
-    val cachedSearchState: CachedSearchState?
-        get() = runtime.cachedSearchState
+    val cachedSearchTabState: CachedSearchTabState?
+        get() = runtime.cachedSearchTabState
 
     val sourceCatalog: SearchSourceCatalog?
         get() = runtime.sourceCatalog
@@ -220,12 +222,18 @@ object ClientPlaybackHandler {
     internal fun beginSearchRequest(query: String, sourceId: String = "", limit: Int = 20, offset: Int = 0): Deferred<SearchResponse>? =
         runtime.beginSearchRequest(query, sourceId, limit, offset)
 
-    fun sendQueueRequest(): Long? = runtime.sendQueueRequest()
+    fun sendQueueRequest(limit: Int = 20, offset: Int = 0): Long? = runtime.sendQueueRequest(limit, offset)
 
-    fun sendUiBootstrapRequest(): Long? = runtime.sendUiBootstrapRequest()
+    fun sendUiBootstrapRequest(queueLimit: Int = 20): Long? = runtime.sendUiBootstrapRequest(queueLimit)
 
-    internal fun beginQueueRequest(): Deferred<QueueResponse>? =
-        runtime.beginQueueRequest()
+    fun sendSelectionPageRequest(sessionId: String, offset: Int = 0, limit: Int = 20): Long? =
+        runtime.sendSelectionPageRequest(sessionId, offset, limit)
+
+    internal fun beginQueueRequest(limit: Int = 20, offset: Int = 0): Deferred<QueueResponse>? =
+        runtime.beginQueueRequest(limit, offset)
+
+    internal fun beginSelectionPageRequest(sessionId: String, offset: Int = 0, limit: Int = 20): Deferred<SelectionPageResponse>? =
+        runtime.beginSelectionPageRequest(sessionId, offset, limit)
 
     fun sendQueueRemoveRequest(track: TrackInfo): Long? = runtime.sendQueueRemoveRequest(track)
 
@@ -256,7 +264,7 @@ object ClientPlaybackHandler {
     internal fun beginSelectionSubmitRequest(entry: SelectionEntry, mode: TrackAddMode = TrackAddMode.NORMAL): Deferred<SelectionSubmitResponse>? =
         runtime.beginSelectionSubmitRequest(entry, mode)
 
-    fun cacheSearchState(state: CachedSearchState?) = runtime.cacheSearchState(state)
+    fun cacheSearchTabState(state: CachedSearchTabState?) = runtime.cacheSearchTabState(state)
 
     fun clearContext() = runtime.clearContext()
 
@@ -438,6 +446,10 @@ object ClientPlaybackHandler {
             guiListener?.onSelectionSubmitResponse(response)
         }
 
+        override fun onSelectionPageResponse(response: SelectionPageResponse) {
+            guiListener?.onSelectionPageResponse(response)
+        }
+
         override fun onQueueResponse(response: QueueResponse) {
             guiListener?.onQueueResponse(response)
         }
@@ -476,6 +488,10 @@ object ClientPlaybackHandler {
 
         override fun onPlaybackStateChanged() {
             guiListener?.onPlaybackStateChanged()
+        }
+
+        override fun onPlaybackSnapshotApplied() {
+            guiListener?.onPlaybackSnapshotApplied()
         }
     }
 }
