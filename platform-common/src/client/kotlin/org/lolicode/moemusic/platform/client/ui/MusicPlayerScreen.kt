@@ -167,6 +167,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     private var pendingIdentifierSubmitRequestId: Long? = null
     private var pendingSelectionSubmitRequestId: Long? = null
     private var pendingQueueRemoveRequestId: Long? = null
+    private var pendingQueueClearRequestId: Long? = null
     private var pendingPlaybackControlRequestId: Long? = null
     private var playbackError: String? = null
     private var playbackSuccess: String? = null
@@ -301,6 +302,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         }
         ClientPlaybackHandler.lastTrackSubmitResponse?.let(::onTrackSubmitResponse)
         ClientPlaybackHandler.lastQueueRemoveResponse?.let(::onQueueRemoveResponse)
+        ClientPlaybackHandler.lastQueueClearResponse?.let(::onQueueClearResponse)
         ClientPlaybackHandler.lastPlaybackControlResponse?.let(::onPlaybackControlResponse)
         (ClientPlaybackHandler.lastLocalPlaybackFailureMessage
             ?: ClientPlaybackHandler.lastLocalPlaybackBlockedMessage)?.let { message ->
@@ -1123,6 +1125,27 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         }.pos(margin, contentY).size(60, 16).build()
         refreshButton.active = canViewQueue()
         addRenderableWidget(refreshButton)
+
+        val clearButton = Button.builder(McText.translatable("screen.moemusic.queue.clear")) {
+            val options = buildList {
+                add(RowActionMenuOption(tr("screen.moemusic.queue.clear_self")) {
+                    queueError = null
+                    queueSuccess = null
+                    pendingQueueClearRequestId = ClientPlaybackHandler.sendQueueClearRequest(QueueClearScopeProto.QUEUE_CLEAR_SCOPE_SELF)
+                })
+                if (hasQueueControlPermission()) {
+                    add(RowActionMenuOption(tr("screen.moemusic.queue.clear_all")) {
+                        queueError = null
+                        queueSuccess = null
+                        pendingQueueClearRequestId = ClientPlaybackHandler.sendQueueClearRequest(QueueClearScopeProto.QUEUE_CLEAR_SCOPE_ALL)
+                    })
+                }
+            }
+            rowActionMenu = RowActionMenuState(margin + 64, contentY + 18, options)
+            rebuildScreenWidgets()
+        }.pos(margin + 64, contentY).size(60, 16).build()
+        clearButton.active = canViewQueue()
+        addRenderableWidget(clearButton)
 
         val queueUpButton = Button.builder(McText.literal("▲")) {
             queueScrollOffset = (queueScrollOffset - 1).coerceAtLeast(0)
@@ -2556,14 +2579,29 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     private fun rowMenuOptionsFor(
         track: TrackInfo,
         origin: TrackListVariant = TrackListVariant.QUEUE
-    ): List<RowActionMenuOption> =
-        buildModerationOptions(
-            sourceId = track.sourceId,
-            trackId = track.id.takeIf { it.isNotBlank() },
-            trackLabel = track.title.ifBlank { track.id },
-            trackNote = buildTrackRuleNote(track.title.ifBlank { track.id }, track.artistDisplay),
-            origin = origin,
+    ): List<RowActionMenuOption> = buildList {
+        addAll(
+            buildModerationOptions(
+                sourceId = track.sourceId,
+                trackId = track.id.takeIf { it.isNotBlank() },
+                trackLabel = track.title.ifBlank { track.id },
+                trackNote = buildTrackRuleNote(track.title.ifBlank { track.id }, track.artistDisplay),
+                origin = origin,
+            )
         )
+        if (origin == TrackListVariant.QUEUE && hasQueueControlPermission() && !track.submittedByUserName.isNullOrBlank()) {
+            add(
+                RowActionMenuOption(tr("screen.moemusic.queue.clear_user_tracks", track.submittedByUserName)) {
+                    queueError = null
+                    queueSuccess = null
+                    pendingQueueClearRequestId = ClientPlaybackHandler.sendQueueClearRequest(
+                        QueueClearScopeProto.QUEUE_CLEAR_SCOPE_USER,
+                        track.submittedByUserName,
+                    )
+                }
+            )
+        }
+    }
 
     private fun buildModerationOptions(
         sourceId: String?,
@@ -2952,6 +2990,24 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 queueError = null
                 pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
             }
+        }
+    }
+
+    override fun onQueueClearResponse(response: QueueClearResponse) {
+        Minecraft.getInstance().execute {
+            if (pendingQueueClearRequestId != response.request_id) return@execute
+            rowActionMenu = null
+            rowActionMenuLayout = null
+            pendingQueueClearRequestId = null
+            if (response.failure.isNotEmpty()) {
+                queueError = response.failure
+                queueSuccess = null
+            } else {
+                queueError = null
+                queueSuccess = response.success.ifEmpty { tr("action.moemusic.queue.cleared_all", response.removed_count.toString()) }
+                pendingQueueRequestId = ClientPlaybackHandler.sendQueueRequest(limit = QUEUE_PAGE_SIZE, offset = 0)
+            }
+            rebuildScreenWidgets()
         }
     }
 
