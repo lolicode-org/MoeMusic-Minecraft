@@ -16,28 +16,37 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import net.minecraft.commands.CommandSourceStack
 import net.minecraft.commands.Commands
-import net.minecraft.network.chat.*
 import net.minecraft.server.level.ServerPlayer
-import org.lolicode.moemusic.api.*
+import net.minecraft.network.chat.ClickEvent
+import net.minecraft.network.chat.Component
+import net.minecraft.network.chat.HoverEvent
+import net.minecraft.network.chat.MutableComponent
+import org.lolicode.moemusic.api.FilterBlockException
+import org.lolicode.moemusic.api.IdentifierResolvableMusicSource
+import org.lolicode.moemusic.api.LocalizedText
+import org.lolicode.moemusic.api.MoeMusicApi
+import org.lolicode.moemusic.api.SearchableMusicSource
 import org.lolicode.moemusic.api.model.*
 import org.lolicode.moemusic.api.service.*
 import org.lolicode.moemusic.core.config.ModConfigManager
+import org.lolicode.moemusic.core.error.UserFacingErrors
 import org.lolicode.moemusic.core.contentfilter.ContentFilterRuleEditor
 import org.lolicode.moemusic.core.contentfilter.ContentFilterRuntime
-import org.lolicode.moemusic.core.error.UserFacingErrors
 import org.lolicode.moemusic.core.i18n.Localization
 import org.lolicode.moemusic.core.permission.PermissionNodes
 import org.lolicode.moemusic.core.plugin.PluginManager
 import org.lolicode.moemusic.core.session.UserSessionRegistry
+import org.lolicode.moemusic.core.source.SelectionSessionManager
 import org.lolicode.moemusic.core.source.builtin.HttpMusicSource
+import org.lolicode.moemusic.platform.runtime.MoePlatform
+import org.lolicode.moemusic.platform.player.MinecraftUserRegistry
 import org.lolicode.moemusic.platform.chat.LocalizedChatRenderer
 import org.lolicode.moemusic.platform.command.MusicCommands.canManageContentFilter
 import org.lolicode.moemusic.platform.command.MusicCommands.register
 import org.lolicode.moemusic.platform.permission.PermissionResolver
-import org.lolicode.moemusic.platform.player.MinecraftUserRegistry
-import org.lolicode.moemusic.platform.runtime.MoePlatform
 import org.slf4j.LoggerFactory
-import java.util.*
+import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 
 /**
@@ -130,12 +139,58 @@ object MusicCommands {
                 .then(
                     Commands.literal("queue")
                         .requires(requiresPermission(PermissionNodes.QUEUE_VIEW))
-                        .executes { ctx -> cmdQueue(ctx.source) }
+                        .then(
+                            Commands.literal("--page")
+                                .then(
+                                    Commands.argument("page", IntegerArgumentType.integer(1))
+                                        .executes { ctx -> cmdQueue(ctx.source, IntegerArgumentType.getInteger(ctx, "page")) }
+                                )
+                        )
+                        .then(
+                            Commands.argument("page", IntegerArgumentType.integer(1))
+                                .executes { ctx -> cmdQueue(ctx.source, IntegerArgumentType.getInteger(ctx, "page")) }
+                        )
+                        .executes { ctx -> cmdQueue(ctx.source, 1) }
                 )
                 .then(
                     Commands.literal("list")
                         .requires(requiresPermission(PermissionNodes.QUEUE_VIEW))
-                        .executes { ctx -> cmdQueue(ctx.source) }
+                        .then(
+                            Commands.literal("--page")
+                                .then(
+                                    Commands.argument("page", IntegerArgumentType.integer(1))
+                                        .executes { ctx -> cmdQueue(ctx.source, IntegerArgumentType.getInteger(ctx, "page")) }
+                                )
+                        )
+                        .then(
+                            Commands.argument("page", IntegerArgumentType.integer(1))
+                                .executes { ctx -> cmdQueue(ctx.source, IntegerArgumentType.getInteger(ctx, "page")) }
+                        )
+                        .executes { ctx -> cmdQueue(ctx.source, 1) }
+                )
+                .then(
+                    Commands.literal("choices")
+                        .requires(requiresPermission(PermissionNodes.SUBMIT))
+                        .then(
+                            Commands.argument("sessionId", StringArgumentType.string())
+                                .then(
+                                    Commands.argument("page", IntegerArgumentType.integer(1))
+                                        .executes { ctx ->
+                                            cmdChoices(
+                                                ctx.source,
+                                                StringArgumentType.getString(ctx, "sessionId"),
+                                                IntegerArgumentType.getInteger(ctx, "page"),
+                                            )
+                                        }
+                                )
+                                .executes { ctx ->
+                                    cmdChoices(
+                                        ctx.source,
+                                        StringArgumentType.getString(ctx, "sessionId"),
+                                        1,
+                                    )
+                                }
+                        )
                 )
                 .then(removeCommandNode())
                 .then(searchCommandNode())
@@ -499,8 +554,13 @@ object MusicCommands {
                     }
 
                     is IdentifierSubmitOutcome.Choices -> {
+                        val session = SelectionSessionManager.createSession(
+                            ownerUserId = sourceUser(source)?.id,
+                            sourceId = outcome.entries.firstOrNull()?.sourceId.orEmpty(),
+                            entries = outcome.entries,
+                        )
                         source.server.execute {
-                            renderSelectionChoices(source, outcome.entries, intro = selectionPrompt())
+                            renderSelectionChoices(source, outcome.entries, sessionId = session.id, currentPage = 1, intro = selectionPrompt())
                         }
                     }
                 }
@@ -565,8 +625,13 @@ object MusicCommands {
                     }
 
                     is SelectionSubmitOutcome.Choices -> {
+                        val session = SelectionSessionManager.createSession(
+                            ownerUserId = sourceUser(source)?.id,
+                            sourceId = sourceId,
+                            entries = outcome.entries,
+                        )
                         source.server.execute {
-                            renderSelectionChoices(source, outcome.entries)
+                            renderSelectionChoices(source, outcome.entries, sessionId = session.id, currentPage = 1)
                         }
                     }
                 }
@@ -580,7 +645,7 @@ object MusicCommands {
         return 1
     }
 
-    private fun cmdQueue(source: CommandSourceStack): Int {
+    private fun cmdQueue(source: CommandSourceStack, page: Int = 1): Int {
         val currentTrack = MoePlatform.playbackController.currentContext?.track
         val snapshot = MoePlatform.queue.userQueueSnapshot()
 
@@ -589,18 +654,61 @@ object MusicCommands {
             return 1
         }
 
-        val totalShown = snapshot.size + (if (currentTrack != null) 1 else 0)
+        val pageSize = COMMAND_SEARCH_PAGE_SIZE
+        val total = snapshot.size
+        val totalPages = if (total == 0) 1 else ((total - 1) / pageSize) + 1
+        val clampedPage = page.coerceIn(1, totalPages)
+        val offset = (clampedPage - 1) * pageSize
+        val pageTracks = snapshot.drop(offset).take(pageSize)
+
         sendMultilineSuccess(
             source,
             buildList {
-                add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.queue.header", totalShown)))
-                currentTrack?.let { track ->
-                    add(buildQueueTrackLineComponent(source, null, track, isCurrent = true))
+                if (totalPages > 1) {
+                    add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.queue.header_paged", total, clampedPage, totalPages)))
+                } else {
+                    val totalShown = snapshot.size + (if (currentTrack != null) 1 else 0)
+                    add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.queue.header", totalShown)))
                 }
-                snapshot.forEachIndexed { i, track ->
-                    add(buildQueueTrackLineComponent(source, i + 1, track, isCurrent = false))
+                if (clampedPage == 1) {
+                    currentTrack?.let { track ->
+                        add(buildQueueTrackLineComponent(source, null, track, isCurrent = true))
+                    }
                 }
+                pageTracks.forEachIndexed { i, track ->
+                    add(buildQueueTrackLineComponent(source, offset + i + 1, track, isCurrent = false))
+                }
+                buildQueuePaginationFooter(source, clampedPage, totalPages)?.let(::add)
             }
+        )
+        return 1
+    }
+
+    private fun cmdChoices(source: CommandSourceStack, sessionId: String, page: Int = 1): Int {
+        val user = sourceUser(source)
+        val bypassOwnership = user?.let { PermissionResolver.hasPermission(source, PermissionNodes.QUEUE_CONTROL) } ?: true
+        val session = SelectionSessionManager.getSession(sessionId, user?.id, bypassOwnership)
+        if (session == null) {
+            sendFailure(source, LocalizedText.key("error.moemusic.selection.session_expired"))
+            return 0
+        }
+        val total = session.entries.size
+        if (total == 0) {
+            sendFailure(source, LocalizedText.key("error.moemusic.selection.session_expired"))
+            return 0
+        }
+        val pageSize = COMMAND_SEARCH_PAGE_SIZE
+        val totalPages = ((total - 1) / pageSize) + 1
+        val clampedPage = page.coerceIn(1, totalPages)
+        val offset = (clampedPage - 1) * pageSize
+        val slice = session.entries.drop(offset).take(pageSize)
+        renderSelectionChoices(
+            source = source,
+            entries = slice,
+            sessionId = session.id,
+            currentPage = clampedPage,
+            totalChoices = total,
+            offset = offset,
         )
         return 1
     }
@@ -1041,17 +1149,41 @@ object MusicCommands {
     private fun renderSelectionChoices(
         source: CommandSourceStack,
         entries: List<SelectionEntry>,
+        sessionId: String? = null,
+        currentPage: Int = 1,
+        totalChoices: Int = entries.size,
+        offset: Int = 0,
         intro: LocalizedText? = null,
     ) {
         val canBypassFilter = canBypassContentFilter(source)
         val canSeeFilterDetail = canManageContentFilter(source)
+        val pageSize = COMMAND_SEARCH_PAGE_SIZE
+        val totalPages = if (totalChoices == 0) 1 else ((totalChoices - 1) / pageSize) + 1
+        val displayedEntries = if (sessionId != null && totalChoices > pageSize && entries.size > pageSize) {
+            entries.take(pageSize)
+        } else {
+            entries
+        }
+
         sendMultilineSuccess(
             source,
             buildList {
                 intro?.let { add(prefixedSuccessLine(source, it)) }
-                add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.selection.header", entries.size)))
-                entries.forEachIndexed { index, entry ->
-                    add(renderSelectionChoiceLine(source, index, entry, canBypassFilter, canSeeFilterDetail))
+                if (totalPages > 1) {
+                    add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.selection.header_paged", totalChoices, currentPage, totalPages)))
+                } else {
+                    add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.selection.header", totalChoices)))
+                }
+                displayedEntries.forEachIndexed { index, entry ->
+                    add(renderSelectionChoiceLine(source, offset + index, entry, canBypassFilter, canSeeFilterDetail))
+                }
+                if (sessionId != null && totalPages > 1) {
+                    buildChoicesPaginationFooter(
+                        source = source,
+                        sessionId = sessionId,
+                        currentPage = currentPage,
+                        totalPages = totalPages,
+                    )?.let(::add)
                 }
             }
         )
@@ -1527,6 +1659,89 @@ object MusicCommands {
                     labelColor = "§e",
                     hover = LocalizedText.key("action.moemusic.search.next_page"),
                     command = searchCommand(queryText, normalizedSourceId, currentPage + 1),
+                )
+            )
+        }
+        return footer
+    }
+
+    fun queueCommand(page: Int = 1): String =
+        if (page > 1) "/music queue --page $page" else "/music queue"
+
+    fun choicesCommand(sessionId: String, page: Int = 1): String =
+        if (page > 1) "/music choices ${quoteCommandToken(sessionId)} $page" else "/music choices ${quoteCommandToken(sessionId)}"
+
+    private fun buildQueuePaginationFooter(
+        source: CommandSourceStack,
+        currentPage: Int,
+        totalPages: Int,
+    ): MutableComponent? {
+        if (totalPages <= 1) return null
+
+        val footer = McText.literal("  ")
+        if (currentPage > 1) {
+            footer.append(
+                commandActionComponent(
+                    source = source,
+                    label = "<",
+                    labelColor = "§e",
+                    hover = LocalizedText.key("action.moemusic.queue.prev_page"),
+                    command = queueCommand(currentPage - 1),
+                )
+            )
+            footer.append(McText.literal(" "))
+        }
+
+        footer.append(McText.literal("§8(§7$currentPage§8 / §7$totalPages§8)"))
+
+        if (currentPage < totalPages) {
+            footer.append(McText.literal(" "))
+            footer.append(
+                commandActionComponent(
+                    source = source,
+                    label = ">",
+                    labelColor = "§e",
+                    hover = LocalizedText.key("action.moemusic.queue.next_page"),
+                    command = queueCommand(currentPage + 1),
+                )
+            )
+        }
+        return footer
+    }
+
+    private fun buildChoicesPaginationFooter(
+        source: CommandSourceStack,
+        sessionId: String,
+        currentPage: Int,
+        totalPages: Int,
+    ): MutableComponent? {
+        if (totalPages <= 1) return null
+
+        val footer = McText.literal("  ")
+        if (currentPage > 1) {
+            footer.append(
+                commandActionComponent(
+                    source = source,
+                    label = "<",
+                    labelColor = "§e",
+                    hover = LocalizedText.key("action.moemusic.selection.prev_page"),
+                    command = choicesCommand(sessionId, currentPage - 1),
+                )
+            )
+            footer.append(McText.literal(" "))
+        }
+
+        footer.append(McText.literal("§8(§7$currentPage§8 / §7$totalPages§8)"))
+
+        if (currentPage < totalPages) {
+            footer.append(McText.literal(" "))
+            footer.append(
+                commandActionComponent(
+                    source = source,
+                    label = ">",
+                    labelColor = "§e",
+                    hover = LocalizedText.key("action.moemusic.selection.next_page"),
+                    command = choicesCommand(sessionId, currentPage + 1),
                 )
             )
         }

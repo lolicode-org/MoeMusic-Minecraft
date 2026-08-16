@@ -48,6 +48,7 @@ object ClientNetworkSetup {
             PacketIds.TRACK_SUBMIT_RESPONSE,
             PacketIds.IDENTIFIER_SUBMIT_RESPONSE,
             PacketIds.SELECTION_SUBMIT_RESPONSE,
+            PacketIds.SELECTION_PAGE_RESPONSE,
             PacketIds.SYNC_RESPONSE,
             PacketIds.SERVER_WELCOME,
             PacketIds.PLAYBACK_SNAPSHOT_PUSH,
