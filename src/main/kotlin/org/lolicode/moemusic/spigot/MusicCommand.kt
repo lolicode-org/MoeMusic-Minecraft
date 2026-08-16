@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import net.md_5.bungee.api.chat.BaseComponent
+import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
@@ -67,9 +68,16 @@ class MusicCommand(
             "resume" -> control(sender, PlaybackAction.RESUME, "action.moemusic.playback.resumed")
             "skip", "next" -> control(sender, PlaybackAction.SKIP, "action.moemusic.playback.skipped")
             "stop" -> control(sender, PlaybackAction.STOP, "action.moemusic.playback.stopped")
-            "queue", "list" -> queue(sender, args.drop(1))
+            "queue", "list" -> {
+                if (args.size > 1 && args[1].lowercase(Locale.ROOT) == "clear") {
+                    clear(sender, args.drop(2))
+                } else {
+                    queue(sender, args.drop(1))
+                }
+            }
             "choices" -> choicesCommand(sender, args.drop(1))
             "remove" -> remove(sender, args.drop(1))
+            "clear" -> clear(sender, args.drop(1))
             "search" -> search(sender, args.drop(1))
             "reload" -> reload(sender, args.drop(1))
             "filter" -> filter(sender, args.drop(1))
@@ -97,6 +105,9 @@ class MusicCommand(
             args[0].equals("select", true) && args.size == 4 -> modeSuggestions(sender)
             args[0].equals("search", true) -> searchSuggestions(args)
             args[0].equals("remove", true) && args.size == 2 -> sourceIds(false)
+            args[0].equals("clear", true) && args.size == 2 -> clearSuggestions(sender)
+            (args[0].equals("queue", true) || args[0].equals("list", true)) && args.size == 2 -> listOf("clear", "--page")
+            (args[0].equals("queue", true) || args[0].equals("list", true)) && args.size == 3 && args[1].equals("clear", true) -> clearSuggestions(sender)
             args[0].equals("reload", true) && args.size == 2 -> buildList {
                 if (hasPermission(sender, PermissionNodes.CONFIG_RELOAD)) add("all")
                 if (hasPermission(sender, PermissionNodes.CONTENT_FILTER_MANAGE)) add("filter")
@@ -120,7 +131,7 @@ class MusicCommand(
     private fun rootSuggestions(sender: CommandSender): List<String> = buildList {
         if (hasPermission(sender, PermissionNodes.SUBMIT)) addAll(listOf("add", "addById", "select"))
         if (hasPermission(sender, PermissionNodes.SEARCH)) add("search")
-        if (hasPermission(sender, PermissionNodes.QUEUE_VIEW)) addAll(listOf("queue", "list", "remove"))
+        if (hasPermission(sender, PermissionNodes.QUEUE_VIEW)) addAll(listOf("queue", "list", "remove", "clear"))
         if (hasPermission(sender, PermissionNodes.PLAYBACK_CONTROL)) addAll(listOf("pause", "resume", "stop"))
         if (hasSkipPermission(sender)) addAll(listOf("skip", "next"))
         if (hasPermission(sender, PermissionNodes.SYSTEM_INFO)) add("system")
@@ -335,6 +346,80 @@ class MusicCommand(
             QueueRemoveResult.NOT_FOUND -> Chat.failure(sender, LocalizedText.key("error.moemusic.queue.track_not_found"))
             QueueRemoveResult.FORBIDDEN -> Chat.failure(sender, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
             else -> Chat.failure(sender, outcome.failure ?: LocalizedText.key("error.moemusic.internal"))
+        }
+    }
+
+    private fun clearSuggestions(sender: CommandSender): List<String> = buildList {
+        if (!hasPermission(sender, PermissionNodes.QUEUE_VIEW)) return@buildList
+        add("--self")
+        if (hasPermission(sender, PermissionNodes.QUEUE_CONTROL)) {
+            add("--all")
+            addAll(Bukkit.getOnlinePlayers().map { it.name })
+            addAll(ServerRuntimeCoordinator.queue.userQueueSnapshot().mapNotNull { it.submittedByUserName })
+        }
+    }
+
+    private fun clear(sender: CommandSender, args: List<String>) {
+        if (!require(sender, PermissionNodes.QUEUE_VIEW)) return
+        val targetArg = args.firstOrNull()
+        when {
+            targetArg == null || targetArg.equals("--self", ignoreCase = true) -> {
+                val player = sender as? Player ?: return Chat.failure(
+                    sender,
+                    LocalizedText.key("error.moemusic.queue.clear_console_requires_target"),
+                )
+                val outcome = ServerRuntimeCoordinator.userActionService.clearQueue(
+                    targetUserId = player.uniqueId,
+                    targetUserName = player.name,
+                    requester = user(sender),
+                )
+                val failure = outcome.failure
+                if (failure != null) {
+                    Chat.failure(sender, failure)
+                } else {
+                    Chat.success(sender, LocalizedText.key("action.moemusic.queue.cleared_self", outcome.removedCount))
+                }
+            }
+            targetArg.equals("--all", ignoreCase = true) -> {
+                val outcome = ServerRuntimeCoordinator.userActionService.clearQueue(
+                    targetUserId = null,
+                    targetUserName = null,
+                    requester = user(sender),
+                )
+                val failure = outcome.failure
+                if (failure != null) {
+                    Chat.failure(sender, failure)
+                } else {
+                    Chat.success(sender, LocalizedText.key("action.moemusic.queue.cleared_all", outcome.removedCount))
+                }
+            }
+            else -> {
+                val targetName = unquote(targetArg)
+                val onlinePlayer = Bukkit.getPlayerExact(targetName) ?: Bukkit.getPlayer(targetName)
+                val outcome = if (onlinePlayer != null) {
+                    ServerRuntimeCoordinator.userActionService.clearQueue(
+                        targetUserId = onlinePlayer.uniqueId,
+                        targetUserName = onlinePlayer.name,
+                        requester = user(sender),
+                    )
+                } else {
+                    ServerRuntimeCoordinator.userActionService.clearQueue(
+                        targetUserId = null,
+                        targetUserName = targetName,
+                        requester = user(sender),
+                    )
+                }
+                val failure = outcome.failure
+                if (failure != null) {
+                    Chat.failure(sender, failure)
+                } else {
+                    val displayName = onlinePlayer?.name ?: targetName
+                    Chat.success(
+                        sender,
+                        LocalizedText.key("action.moemusic.queue.cleared_user", outcome.removedCount, displayName),
+                    )
+                }
+            }
         }
     }
 
