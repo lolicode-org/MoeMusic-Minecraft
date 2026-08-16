@@ -237,8 +237,8 @@ object ClientPlaybackHandler {
 
     fun sendQueueRemoveRequest(track: TrackInfo): Long? = runtime.sendQueueRemoveRequest(track)
 
-    internal fun beginQueueRemoveRequest(sourceId: String, trackId: String): Deferred<QueueRemoveResponse>? =
-        runtime.beginQueueRemoveRequest(sourceId, trackId)
+    internal fun beginQueueRemoveRequest(sourceId: String, trackId: String, queueEntryId: String? = null): Deferred<QueueRemoveResponse>? =
+        runtime.beginQueueRemoveRequest(sourceId, trackId, queueEntryId)
 
     fun sendTrackSubmit(track: TrackInfo, mode: TrackAddMode = TrackAddMode.NORMAL): Long? =
         runtime.sendTrackSubmit(track, mode)

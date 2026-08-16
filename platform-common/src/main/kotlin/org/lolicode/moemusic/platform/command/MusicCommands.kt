@@ -476,6 +476,18 @@ object MusicCommands {
                     }
             )
             .then(
+                Commands.literal("--entry")
+                    .then(
+                        Commands.argument("entryId", StringArgumentType.string())
+                            .executes { ctx ->
+                                cmdQueueRemoveByEntry(
+                                    source = ctx.source,
+                                    entryId = StringArgumentType.getString(ctx, "entryId"),
+                                )
+                            }
+                    )
+            )
+            .then(
                 sourceIdArgument()
                     .then(
                         Commands.argument("trackId", StringArgumentType.string())
@@ -749,6 +761,43 @@ object MusicCommands {
         }
     }
 
+    private fun cmdQueueRemoveByEntry(source: CommandSourceStack, entryId: String): Int {
+        val trimmedEntryId = entryId.trim()
+        if (trimmedEntryId.isBlank()) {
+            sendFailure(source, LocalizedText.key("error.moemusic.track.bad_request"))
+            return 0
+        }
+
+        return when (
+            MoePlatform.userActionService.removeQueuedTrackByEntryId(
+                sourceId = "",
+                trackId = "",
+                queueEntryId = trimmedEntryId,
+                requester = sourceUser(source),
+            ).result
+        ) {
+            QueueRemoveResult.REMOVED -> {
+                sendSuccess(source, LocalizedText.key("action.moemusic.queue.removed", trimmedEntryId))
+                1
+            }
+
+            QueueRemoveResult.NOT_FOUND -> {
+                sendFailure(source, LocalizedText.key("error.moemusic.queue.track_not_found"))
+                0
+            }
+
+            QueueRemoveResult.FORBIDDEN -> {
+                sendFailure(source, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
+                0
+            }
+
+            else -> {
+                sendFailure(source, LocalizedText.key("error.moemusic.internal"))
+                0
+            }
+        }
+    }
+
     private fun cmdQueueRemoveByIndex(source: CommandSourceStack, index: Int): Int {
         val snapshot = MoePlatform.queue.userQueueSnapshot()
         val track = snapshot.getOrNull(index - 1)
@@ -763,7 +812,34 @@ object MusicCommands {
             return 0
         }
 
-        return cmdQueueRemove(source, sourceId, track.id)
+        return when (
+            MoePlatform.userActionService.removeQueuedTrackByEntryId(
+                sourceId = sourceId,
+                trackId = track.id,
+                queueEntryId = track.queueEntryId,
+                requester = sourceUser(source),
+            ).result
+        ) {
+            QueueRemoveResult.REMOVED -> {
+                sendSuccess(source, LocalizedText.key("action.moemusic.queue.removed", track.id))
+                1
+            }
+
+            QueueRemoveResult.NOT_FOUND -> {
+                sendFailure(source, LocalizedText.key("error.moemusic.queue.track_not_found"))
+                0
+            }
+
+            QueueRemoveResult.FORBIDDEN -> {
+                sendFailure(source, LocalizedText.key("error.moemusic.queue.remove_forbidden"))
+                0
+            }
+
+            else -> {
+                sendFailure(source, LocalizedText.key("error.moemusic.internal"))
+                0
+            }
+        }
     }
 
     private fun cmdFilterReload(source: CommandSourceStack): Int {
@@ -1865,7 +1941,7 @@ object MusicCommands {
                 label = "✕",
                 labelColor = "§c",
                 hover = LocalizedText.key("action.moemusic.queue.remove_hover", track.title.ifBlank { track.id }),
-                command = queueRemoveCommand(sourceId, track.id),
+                command = queueRemoveCommand(track),
             )
         )
         return suffix
@@ -1940,6 +2016,10 @@ object MusicCommands {
 
     internal fun queueRemoveCommand(sourceId: String, trackId: String): String =
         "/music remove ${quoteCommandToken(sourceId)} ${quoteCommandToken(trackId)}"
+
+    internal fun queueRemoveCommand(track: TrackInfo): String =
+        track.queueEntryId?.let { "/music remove --entry ${quoteCommandToken(it)}" }
+            ?: queueRemoveCommand(track.sourceId.orEmpty(), track.id)
 
     internal fun trackSubmitCommand(sourceId: String, trackId: String, mode: TrackAddMode = TrackAddMode.NORMAL): String {
         val base = "/music addById ${quoteCommandToken(sourceId)} ${quoteCommandToken(trackId)}"
