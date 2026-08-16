@@ -20,6 +20,7 @@ private val nonHandshakeClientPacketIds = listOf(
     PacketIds.QUEUE_REQUEST,
     PacketIds.UI_BOOTSTRAP_REQUEST,
     PacketIds.QUEUE_REMOVE_REQUEST,
+    PacketIds.QUEUE_CLEAR_REQUEST,
     PacketIds.PLAYBACK_CONTROL_REQUEST,
     PacketIds.CONTENT_FILTER_ACTION_REQUEST,
 )
@@ -42,6 +43,7 @@ class BadPacketsNetworkChannelTest {
         assertTrue(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.SYNC_RESPONSE))
         assertTrue(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.SEARCH_RESPONSE))
         assertTrue(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.TRACK_SUBMIT_RESPONSE))
+        assertTrue(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.QUEUE_CLEAR_RESPONSE))
         assertTrue(BadPacketsNetworkChannel.allowsStandbyOrUnregisteredDirectSend(PacketIds.PLAYBACK_CONTROL_RESPONSE))
     }
 
