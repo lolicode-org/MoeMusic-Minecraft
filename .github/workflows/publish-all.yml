@@ -158,49 +158,39 @@ jobs:
           for branch in "${branches[@]}"; do
             echo "==> Dispatching branch: $branch"
 
-            if [[ "$branch" == "spigot" || "$branch" == "velocity" ]]; then
-              workflow_file="publish.yml"
+            args=(
+              -f version_type="$version_type"
+              -f changelog_branch="$changelog_branch"
+              -f publish_curseforge="$publish_curseforge"
+              -f dry_run="$dry_run"
+            )
+            param_summary="channel: \`$version_type\`, dry_run: \`$dry_run\`"
 
-              gh workflow run "$workflow_file" \
-                --ref "$branch" \
-                -f version_type="$version_type" \
-                -f changelog_branch="$changelog_branch" \
-                -f publish_curseforge="$publish_curseforge" \
-                -f dry_run="$dry_run"
-
-              param_summary="channel: \`$version_type\`, dry_run: \`$dry_run\`"
-            else
-              workflow_file="publish-mods.yml"
-
-              args=(
-                -f version_type="$version_type"
-                -f changelog_branch="$changelog_branch"
-                -f publish_curseforge="$publish_curseforge"
-                -f dry_run="$dry_run"
-                -f loader_fabric="$loader_fabric"
-              )
+            if [[ "$branch" == version/* ]]; then
+              args+=(-f loader_fabric="$loader_fabric")
+              param_summary="fabric: \`$loader_fabric\`, $param_summary"
 
               case "$branch" in
                 "version/1.18.2"|"version/1.19"|"version/1.20.1")
                   args+=(-f loader_forge="$loader_forge")
-                  param_summary="fabric: \`$loader_fabric\`, forge: \`$loader_forge\`, channel: \`$version_type\`, dry_run: \`$dry_run\`"
+                  param_summary="forge: \`$loader_forge\`, $param_summary"
                   ;;
                 "version/1.21.1")
                   args+=(-f loader_forge="$loader_forge" -f loader_neoforge="$loader_neoforge")
-                  param_summary="fabric: \`$loader_fabric\`, forge: \`$loader_forge\`, neoforge: \`$loader_neoforge\`, channel: \`$version_type\`, dry_run: \`$dry_run\`"
+                  param_summary="forge: \`$loader_forge\`, neoforge: \`$loader_neoforge\`, $param_summary"
                   ;;
                 *)
                   args+=(-f loader_neoforge="$loader_neoforge")
-                  param_summary="fabric: \`$loader_fabric\`, neoforge: \`$loader_neoforge\`, channel: \`$version_type\`, dry_run: \`$dry_run\`"
+                  param_summary="neoforge: \`$loader_neoforge\`, $param_summary"
                   ;;
               esac
-
-              gh workflow run "$workflow_file" --ref "$branch" "${args[@]}"
             fi
 
-            actions_url="${server_url}/${repo}/actions/workflows/${workflow_file}?query=branch%3A${branch//\//%2F}"
-            echo "Dispatched $workflow_file on $branch successfully."
-            echo "| \`$branch\` | \`$workflow_file\` | $param_summary | [View Runs]($actions_url) |" >> "$GITHUB_STEP_SUMMARY"
+            gh workflow run "publish.yml" --ref "$branch" "${args[@]}"
+
+            actions_url="${server_url}/${repo}/actions/workflows/publish.yml?query=branch%3A${branch//\//%2F}"
+            echo "Dispatched publish.yml on $branch successfully."
+            echo "| \`$branch\` | \`publish.yml\` | $param_summary | [View Runs]($actions_url) |" >> "$GITHUB_STEP_SUMMARY"
           done
 
           echo ""
