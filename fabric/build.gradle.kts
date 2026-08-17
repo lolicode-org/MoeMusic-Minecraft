@@ -25,19 +25,19 @@ val sharedCoreArtifact = libsCatalog.findLibrary("moemusic-core-artifact").get()
 val sharedClientCoreArtifact = libsCatalog.findLibrary("moemusic-client-core-artifact").get()
 val platformCommonVersion = libsCatalog.findVersion("moemusic-platform-common").get().requiredVersion
 
-val sharedAssetResources by configurations.creating {
+val sharedAssetResources = configurations.create("sharedAssetResources") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = false
 }
 
-val installShade by configurations.creating {
+val installShade = configurations.create("installShade") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = true
 }
 
-val generateMoeMusicFabricBuildInfo by tasks.registering {
+val generateMoeMusicFabricBuildInfo = tasks.register("generateMoeMusicFabricBuildInfo") {
     val modVersion = project.version.toString()
     inputs.property("modVersion", modVersion)
     outputs.dir(generatedBuildInfoDir)
@@ -60,7 +60,7 @@ val generateMoeMusicFabricBuildInfo by tasks.registering {
     }
 }
 
-val generateMoeMusicPlatformBuildInfo by tasks.registering {
+val generateMoeMusicPlatformBuildInfo = tasks.register("generateMoeMusicPlatformBuildInfo") {
     inputs.property("platformCommonVersion", platformCommonVersion)
     outputs.dir(generatedBuildInfoDir)
 
@@ -178,7 +178,7 @@ tasks.processResources {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-val installShadowJar by tasks.registering(ShadowJar::class) {
+val installShadowJar = tasks.register<ShadowJar>("installShadowJar") {
     dependsOn(tasks.named("jar"))
     archiveClassifier.set("dev-shadow")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE

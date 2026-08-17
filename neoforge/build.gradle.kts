@@ -57,19 +57,19 @@ fun shouldEmbedInNeoForgeDevMod(id: ComponentIdentifier): Boolean =
         else -> id.displayName in sharedModuleNames.map { "project :shared:$it" }
     }
 
-val sharedRuntimeArtifacts by configurations.creating {
+val sharedRuntimeArtifacts = configurations.create("sharedRuntimeArtifacts") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = true
 }
 
-val sharedAssetResources by configurations.creating {
+val sharedAssetResources = configurations.create("sharedAssetResources") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = false
 }
 
-val unpackSharedRuntimeForDev by tasks.registering(Sync::class) {
+val unpackSharedRuntimeForDev = tasks.register<Sync>("unpackSharedRuntimeForDev") {
     val sharedArtifacts = sharedRuntimeArtifacts.incoming.artifactView {
         componentFilter { shouldEmbedInNeoForgeDevMod(it) }
     }.files
@@ -84,7 +84,7 @@ val unpackSharedRuntimeForDev by tasks.registering(Sync::class) {
 val sharedRuntimeSourceSet = sourceSets.create("sharedRuntime")
 sharedRuntimeSourceSet.output.dir(mapOf("builtBy" to unpackSharedRuntimeForDev), unpackedSharedRuntimeDir)
 
-val generateMoeMusicNeoForgeBuildInfo by tasks.registering {
+val generateMoeMusicNeoForgeBuildInfo = tasks.register("generateMoeMusicNeoForgeBuildInfo") {
     val modVersion = project.version.toString()
     inputs.property("modVersion", modVersion)
     outputs.dir(generatedBuildInfoDir)
@@ -107,7 +107,7 @@ val generateMoeMusicNeoForgeBuildInfo by tasks.registering {
     }
 }
 
-val generateMoeMusicPlatformBuildInfo by tasks.registering {
+val generateMoeMusicPlatformBuildInfo = tasks.register("generateMoeMusicPlatformBuildInfo") {
     inputs.property("platformCommonVersion", platformCommonVersion)
     outputs.dir(generatedBuildInfoDir)
 
@@ -225,6 +225,11 @@ dependencies {
     compileOnly(libs.cloth.config.neoforge)
     compileOnly(libs.luckperms.api)
     compileOnly(libs.sponge.mixin)
+}
+
+// NeoForge 21.1's strict dependency graph requires SLF4J 2.0.9.
+configurations.configureEach {
+    resolutionStrategy.force("org.slf4j:slf4j-api:2.0.9")
 }
 
 tasks.processResources {

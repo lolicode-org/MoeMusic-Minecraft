@@ -62,19 +62,19 @@ fun shouldEmbedInForgeDevMod(id: ComponentIdentifier): Boolean =
         else -> id.displayName in sharedModuleNames.map { "project :shared:$it" }
     }
 
-val sharedRuntimeArtifacts by configurations.creating {
+val sharedRuntimeArtifacts = configurations.create("sharedRuntimeArtifacts") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = true
 }
 
-val sharedAssetResources by configurations.creating {
+val sharedAssetResources = configurations.create("sharedAssetResources") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = false
 }
 
-val unpackSharedRuntimeForDev by tasks.registering(Sync::class) {
+val unpackSharedRuntimeForDev = tasks.register<Sync>("unpackSharedRuntimeForDev") {
     val sharedArtifacts = sharedRuntimeArtifacts.incoming.artifactView {
         componentFilter { shouldEmbedInForgeDevMod(it) }
     }.files
@@ -96,7 +96,7 @@ val unpackSharedRuntimeForDev by tasks.registering(Sync::class) {
 val sharedRuntimeSourceSet = sourceSets.create("sharedRuntime")
 sharedRuntimeSourceSet.output.dir(mapOf("builtBy" to unpackSharedRuntimeForDev), unpackedSharedRuntimeDir)
 
-val generateMoeMusicForgeBuildInfo by tasks.registering {
+val generateMoeMusicForgeBuildInfo = tasks.register("generateMoeMusicForgeBuildInfo") {
     val modVersion = project.version.toString()
     inputs.property("modVersion", modVersion)
     outputs.dir(generatedBuildInfoDir)
@@ -119,7 +119,7 @@ val generateMoeMusicForgeBuildInfo by tasks.registering {
     }
 }
 
-val generateMoeMusicPlatformBuildInfo by tasks.registering {
+val generateMoeMusicPlatformBuildInfo = tasks.register("generateMoeMusicPlatformBuildInfo") {
     inputs.property("platformCommonVersion", platformCommonVersion)
     outputs.dir(generatedBuildInfoDir)
 
@@ -182,7 +182,7 @@ tasks.named<JavaCompile>("compileJava") {
     destinationDirectory.set(forgeDevResourcesDir)
 }
 
-val assembleForgeDevModRoot by tasks.registering(Copy::class) {
+val assembleForgeDevModRoot = tasks.register<Copy>("assembleForgeDevModRoot") {
     dependsOn(tasks.named("classes"))
     from(sharedRuntimeSourceSet.output)
     into(forgeDevResourcesDir)
