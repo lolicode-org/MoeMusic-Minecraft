@@ -10,6 +10,48 @@ plugins {
 
 group = "org.lolicode.moemusic"
 version = libs.versions.moemusic.spigot.get()
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        name = "Spigot Snapshots"
+        url = uri("https://hub.spigotmc.org/nexus/content/repositories/snapshots/")
+        content { includeGroup("org.spigotmc") }
+    }
+    maven {
+        name = "Lolicode Releases"
+        url = uri("https://maven.lolicode.org/releases")
+        content { includeGroupByRegex("org\\.lolicode.*") }
+    }
+    maven {
+        name = "Lolicode Snapshots"
+        url = uri("https://maven.lolicode.org/snapshots")
+        content { includeGroupByRegex("org\\.lolicode.*") }
+    }
+    maven {
+        name = "GitHubPackages"
+        url = uri("https://maven.pkg.github.com/lolicode-org/MoeMusic")
+        credentials {
+            username = providers.gradleProperty("gpr.user")
+                .orElse(providers.environmentVariable("GITHUB_ACTOR"))
+                .orElse("")
+                .get()
+            password = providers.gradleProperty("gpr.key")
+                .orElse(providers.environmentVariable("GITHUB_PACKAGES_TOKEN"))
+                .orElse(providers.environmentVariable("PACKAGES_READ_TOKEN"))
+                .orElse(providers.environmentVariable("GITHUB_TOKEN"))
+                .orElse("")
+                .get()
+        }
+        content { includeGroupByRegex("org\\.lolicode.*") }
+    }
+    maven {
+        url = uri("https://jitpack.io")
+        content { includeGroupByRegex("com\\.github\\.walkyst\\..*") }
+    }
+}
+
 val spigotApiVersion = providers.gradleProperty("spigotApiVersion").orElse(libs.versions.spigot.api)
 val pluginVersion = version.toString()
 val kotlinRuntimeVersion = libs.versions.kotlin.get()
