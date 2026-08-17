@@ -8,6 +8,7 @@ import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Sync
 import org.gradle.jvm.tasks.Jar
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
@@ -177,6 +178,10 @@ tasks.named("sourcesJar") {
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_17
+        // Forge 1.20.1 relies on KotlinForForge 4.12.0 (Kotlin 2.2.21, Coroutines 1.10.2, Serialization 1.9.0)
+        // without backports. Lock compilation to Kotlin 2.2 so Forge runtime never hits missing stdlib APIs.
+        apiVersion = KotlinVersion.KOTLIN_2_2
+        languageVersion = KotlinVersion.KOTLIN_2_2
     }
 
     sourceSets.named("main") {
