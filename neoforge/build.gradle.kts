@@ -28,13 +28,13 @@ val commonMainKotlinDir = rootProject.layout.projectDirectory.dir("platform-comm
 val commonClientKotlinDir = rootProject.layout.projectDirectory.dir("platform-common/src/client/kotlin")
 val commonClientJavaDir = rootProject.layout.projectDirectory.dir("platform-common/src/client/java")
 
-val sharedAssetResources by configurations.creating {
+val sharedAssetResources = configurations.create("sharedAssetResources") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = false
 }
 
-val generateMoeMusicNeoForgeBuildInfo by tasks.registering {
+val generateMoeMusicNeoForgeBuildInfo = tasks.register("generateMoeMusicNeoForgeBuildInfo") {
     val modVersion = project.version.toString()
     inputs.property("modVersion", modVersion)
     outputs.dir(generatedBuildInfoDir)
@@ -57,7 +57,7 @@ val generateMoeMusicNeoForgeBuildInfo by tasks.registering {
     }
 }
 
-val generateMoeMusicPlatformBuildInfo by tasks.registering {
+val generateMoeMusicPlatformBuildInfo = tasks.register("generateMoeMusicPlatformBuildInfo") {
     inputs.property("platformCommonVersion", platformCommonVersion)
     outputs.dir(generatedBuildInfoDir)
 
@@ -167,6 +167,10 @@ dependencies {
     compileOnly(libs.cloth.config.neoforge)
     compileOnly(libs.luckperms.api)
     compileOnly(libs.sponge.mixin)
+}
+// NeoForge 26.x's strict dependency graph requires SLF4J 2.0.17.
+configurations.configureEach {
+    resolutionStrategy.force("org.slf4j:slf4j-api:2.0.17")
 }
 
 tasks.processResources {

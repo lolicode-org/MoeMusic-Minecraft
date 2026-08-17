@@ -110,12 +110,12 @@ fun incompatiblePublishDependencies(loader: String): List<String> =
         else -> emptyList()
     }
 
-val shadedLibraries by configurations.creating {
+val shadedLibraries = configurations.create("shadedLibraries") {
     isCanBeResolved = true
     isCanBeConsumed = false
 }
 
-val neoForgeShadedLibraries by configurations.creating {
+val neoForgeShadedLibraries = configurations.create("neoForgeShadedLibraries") {
     isCanBeResolved = true
     isCanBeConsumed = false
     extendsFrom(shadedLibraries)
@@ -128,7 +128,7 @@ dependencies {
     add(shadedLibraries.name, libsCatalog.findLibrary("moemusic-client-core-artifact").get())
 }
 
-val buildFabricFullJar by tasks.registering(ShadowJar::class) {
+val buildFabricFullJar = tasks.register<ShadowJar>("buildFabricFullJar") {
     group = BasePlugin.BUILD_GROUP
     description = "Builds a shaded Fabric mod jar with bundled shared runtime libraries."
 
@@ -199,7 +199,7 @@ val buildFabricFullJar by tasks.registering(ShadowJar::class) {
     }
 }
 
-val buildNeoForgeFullJar by tasks.registering(ShadowJar::class) {
+val buildNeoForgeFullJar = tasks.register<ShadowJar>("buildNeoForgeFullJar") {
     group = BasePlugin.BUILD_GROUP
     description = "Builds a shaded NeoForge mod jar with bundled shared runtime libraries."
 
