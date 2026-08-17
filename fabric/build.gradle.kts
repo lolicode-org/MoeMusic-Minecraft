@@ -21,13 +21,13 @@ val sharedCoreArtifact = libsCatalog.findLibrary("moemusic-core-artifact").get()
 val sharedClientCoreArtifact = libsCatalog.findLibrary("moemusic-client-core-artifact").get()
 val platformCommonVersion = libsCatalog.findVersion("moemusic-platform-common").get().requiredVersion
 
-val sharedAssetResources by configurations.creating {
+val sharedAssetResources = configurations.create("sharedAssetResources") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = false
 }
 
-val generateMoeMusicFabricBuildInfo by tasks.registering {
+val generateMoeMusicFabricBuildInfo = tasks.register("generateMoeMusicFabricBuildInfo") {
     val modVersion = project.version.toString()
     inputs.property("modVersion", modVersion)
     outputs.dir(generatedBuildInfoDir)
@@ -50,7 +50,7 @@ val generateMoeMusicFabricBuildInfo by tasks.registering {
     }
 }
 
-val generateMoeMusicPlatformBuildInfo by tasks.registering {
+val generateMoeMusicPlatformBuildInfo = tasks.register("generateMoeMusicPlatformBuildInfo") {
     inputs.property("platformCommonVersion", platformCommonVersion)
     outputs.dir(generatedBuildInfoDir)
 
