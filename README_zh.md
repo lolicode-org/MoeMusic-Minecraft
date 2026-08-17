@@ -1,8 +1,8 @@
-# MoeMusic Mod for Minecraft
+# MoeMusic for Minecraft
 
 简体中文 | [English](./README.md)
 
-MoeMusic 是一款为 Minecraft 设计的音乐播放 Mod。它支持同时使用多个音源，并允许玩家通过游戏内控件进行点歌、搜索、切歌及管理播放列表。在服务器上安装时，还能协调服务器上的共享音乐队列，同步所有已连接客户端的音频播放进度。
+MoeMusic for Minecraft 是一款为 Minecraft 设计的音乐播放 Mod 和插件。它支持 fabric、neoforge、forge、spigot、paper、velocity 等多种平台，可以同时使用多个音源，并允许玩家通过游戏内控件进行点歌、搜索、切歌及管理播放列表。在服务器上安装时，还能协调服务器上的共享音乐队列，同步所有已连接客户端的音频播放进度。
 
 <details>
 <summary><b>📷 点击查看游戏内功能截图</b></summary>
