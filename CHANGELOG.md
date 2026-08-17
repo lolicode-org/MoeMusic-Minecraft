@@ -1,26 +1,22 @@
-## 2026-06-25 (v1.3.0)
-- Adapted to Minecraft 26.2.
-- Added volume normalization. The current implementation requires music sources to provide valid LUFS data, so source plugin developers need to expose the relevant field.
-- Added a permission for allowing duplicate track submissions.
-- Added permission state synchronization between the server and client, so GUI controls now update themselves based on the user's permissions.
-- Added in-game error reporting for playback failures, and the current track is now skipped automatically in singleplayer.
-- Corrected the key name used when storing toggle rules for singleplayer worlds, fixing an issue where worlds with the same name could overwrite each other's rules.
-- Fixed keyboard shortcuts not working while playback was stopped.
-- Fixed the HUD cover rotation angle being reset while playback was paused.
-- Fixed when adding the current track to local filter, it won't stop immediately.
-- Fixed some mp3 tracks can't decode, and some flac tracks with id3 tags are misclassified as mp3.
-- Refactored the public API to improve future compatibility. The API version has been raised to 2.1.1, and plugins written for API version 1 must be updated before they can be used again.
-- This should be the first public release after passing Modrinth review. Enjoy!
+## 2026-08-17 (v1.4.0)
+- This release introduced no breaking changes, old clients, servers and plugins will keep working, but upgrading is strongly suggested to benefit from its performance improvements.
+- Added support for Spigot / Paper server and Velocity proxy platforms.
+- Upgraded the network communication protocol to v3, introducing payload compression and packet chunking/reassembly framing for large payloads, and increasing max payload size to 2 MB with backward compatibility for v2 clients and servers.
+- Implemented queue and container selection pagination to improve performance for long playlist.
+- Added queue clearing functionality with the `/music clear` command and a clear button in the music player UI.
+- Fixed track deletion collisions and target ambiguity when duplicate tracks exist in the queue.
+- Added permission level 5 (`LEVEL_DISABLED` / Console Only) for vanilla Minecraft environments without permission mods, allowing server administrators to disable specific MoeMusic actions for all players (Including Operators).
+- Enhanced network security and resilience, illegal packets will be dropped as early as possible.
+- Fixed an issue where client-to-server and server-to-client channels were not registered properly on vanilla-like or proxy servers.
+- Raised public API version to 2.2.0, standardizing baseline runtime libraries and compiler target baselines for maximum cross-version compatibility.
 
-- 适配 Minecraft 26.2。
-- 新增了音量平衡功能。目前的实现需要音源提供有效的 LUFS 数据，请音源开发者在插件中接入相应的字段。
-- 新增了用于允许重复提交乐曲的权限。
-- 新增了服务端和客户端间的权限信息同步，现在GUI中的控件会根据用户的权限更新自身状态。
-- 新增了播放失败时，游戏内的错误报告，并且在单人模式下会自动跳过当前曲目。
-- 修正了存储单人世界的开关规则时使用的键名称，以修复重名的单人世界的开关规则会相互覆盖的问题。
-- 修复了播放停止状态下，键盘快捷键失效的问题。
-- 修复了暂停状态下，HUD 中封面旋转角度被重置的问题。
-- 修复了添加当前正在播放的乐曲到本地过滤器时，歌曲不会立即停止播放的问题。
-- 修复了部分 MP3 无法正常播放、带 ID3 的 FLAC 文件被误判为 MP3 的问题。
-- 重构了公共 API 以提升未来的兼容性。API版本已提升至 2.1.1，此前为 API 版本 1 编写的插件需要重新适配后才能使用。
-- 这应当是通过 Modrinth 审核后的第一个公开发行版本，祝使用愉快！
+- 该版本没有引入破坏性更改，此前的服务端、客户端和插件都可以和该版本配合使用；但本次更新极大地优化了特定场景下的性能，建议升级。
+- 新增了对 Spigot / Paper 服务端与 Velocity 代理服平台的支持。
+- 网络通信协议升级至 v3，引入了数据包压缩与大负载分片/重组机制，并将最大数据包容量提升至 2 MB，同时保持对 v2 协议客户端和服务端的向下兼容。
+- 实现了队列与容器选择列表的分页机制加载，以提升长列表下的性能。
+- 新增了清空队列功能，包括 `/music clear` 指令和播放器界面中的清空按钮。
+- 修复了队列中存在重复曲目时删除目标歧义和 ID 冲突的问题。
+- 为未安装权限模组的原版 Minecraft 环境新增了 5 级权限（`LEVEL_DISABLED` / 仅控制台），允许服主对所有玩家（包括管理员）默认禁用特定的操作。
+- 增强了网络安全与稳定性，异常数据包将会被尽早拦截。
+- 修复了在类原版服务端和代理服上客户端与服务端自定义通信通道未正确注册的问题。
+- 公共 API 版本提升至 2.2.0，规范了标准运行时基础库和编译基线，以确保插件在各版本 Minecraft 上的兼容性。
