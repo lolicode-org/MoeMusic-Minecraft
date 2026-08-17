@@ -44,8 +44,12 @@ MoeMusic combines a modular core playback engine with deep Bukkit/Spigot server 
 
 ## Supported Versions
 
-- Spigot / Paper 1.18.2+.  *NOTE: Not all versions are supported by the client mod.*
-- A single plugin JAR runs across all supported versions.
+- Spigot / Paper 1.18.2+.
+
+> [!NOTE]
+> Though this plugin may run on any spigot-compatible server with JAVA 17 and above,
+> the client mod adapter supports only 1.18-1.18.2, 1.19-1.19.2, 1.20(.1), 1.21(.1), and all versions after 26.1.
+> Using this plugin on any other version may require additional cross-version compatibility plugins, e.g. ViaVersion.
 
 ---
 
