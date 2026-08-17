@@ -18,7 +18,7 @@ on:
         description: 'Publish to CurseForge'
         type: boolean
         required: false
-        default: true
+        default: false
       dry_run:
         description: 'Build and validate publish tasks without uploading'
         type: boolean
