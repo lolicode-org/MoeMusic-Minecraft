@@ -112,6 +112,7 @@ object MoeMusicConfigScreen {
         val builder = ConfigBuilder.create()
             .setParentScreen(parent)
             .setTitle(McText.translatable("config.moemusic.title"))
+            .setAfterInitConsumer(ConfigScreenSubtitleWidget::attach)
 
         val entryBuilder: ConfigEntryBuilder = builder.entryBuilder()
 
@@ -146,11 +147,6 @@ object MoeMusicConfigScreen {
         val defaultLanguageOptions = defaultLanguageSelectorValues(current.defaultLanguage, Localization.availableLocales())
         val currentServerScope = ClientPlaybackHandler.currentServerScope()
 
-        generalCategory.addEntry(
-            entryBuilder.startTextDescription(
-                McText.translatable("config.moemusic.client_only_notice")
-            ).build()
-        )
         generalCategory.addEntry(
             ActionButtonListEntry(
                 McText.translatable("config.moemusic.keybinds"),
