@@ -11,7 +11,12 @@ dependencyResolutionManagement {
         mavenLocal()
         mavenCentral()
         maven("https://repo.papermc.io/repository/maven-public/")
-        maven("https://codeberg.org/api/packages/lolicode/maven") {
+        maven("https://maven.lolicode.org/releases") {
+            name = "Lolicode Releases"
+            content { includeGroupByRegex("org\\.lolicode.*") }
+        }
+        maven("https://maven.lolicode.org/snapshots") {
+            name = "Lolicode Snapshots"
             content { includeGroupByRegex("org\\.lolicode.*") }
         }
         maven("https://jitpack.io")
