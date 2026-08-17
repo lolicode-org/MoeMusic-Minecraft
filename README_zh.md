@@ -109,7 +109,7 @@ MoeMusic 由平台无关的核心库以及 Minecraft Mod 适配实现组成：
 本模组支持通过插件导入第三方音乐源或扩展功能。
 
 > [!TIP]
-> 你可以在 [插件列表](https://github.com/lolicode-org/MoeMusic/wiki/Plugins---%E6%8F%92%E4%BB%B6%E5%88%97%E8%A1%A8) 中查看由我们或社区编写的插件列表及其功能介绍。
+> 你可以在 [插件列表](https://github.com/lolicode-org/MoeMusic/wiki/Plugins---%E6%8F%92%E4%BB%B6%E5%88%97%E8%A1%A8) 中查看由我们或第三方开发者编写的插件列表及其功能介绍。
 
 根据插件作者的开发方式，插件通常有以下两种安装方式：
 

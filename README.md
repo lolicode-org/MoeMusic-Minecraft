@@ -112,7 +112,7 @@ You can install standalone plugins to extend music sources, or use custom langua
 The mod supports importing third-party music sources or extending functionality via plugins.
 
 > [!TIP]
-> See the [Plugins List](https://github.com/lolicode-org/MoeMusic/wiki/Plugins---%E6%8F%92%E4%BB%B6%E5%88%97%E8%A1%A8) for plugins written by us or the community, along with their feature details.
+> See the [Plugins List](https://github.com/lolicode-org/MoeMusic/wiki/Plugins---%E6%8F%92%E4%BB%B6%E5%88%97%E8%A1%A8) for plugins built by us or third-party developers, along with their feature details.
 
 Depending on how the developer built the plugin, it can be installed in one of the following ways:
 
