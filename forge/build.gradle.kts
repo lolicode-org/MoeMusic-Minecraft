@@ -70,31 +70,31 @@ fun shouldEmbedInForgeDevMod(id: ComponentIdentifier): Boolean =
         else -> id.displayName in sharedModuleNames.map { "project :shared:$it" }
     }
 
-val sharedRuntimeArtifacts by configurations.creating {
+val sharedRuntimeArtifacts = configurations.create("sharedRuntimeArtifacts") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = true
 }
 
-val sharedAssetResources by configurations.creating {
+val sharedAssetResources = configurations.create("sharedAssetResources") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = false
 }
 
-val rawBadPacketsForge by configurations.creating {
+val rawBadPacketsForge = configurations.create("rawBadPacketsForge") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = false
 }
 
-val installShade by configurations.creating {
+val installShade = configurations.create("installShade") {
     isCanBeResolved = true
     isCanBeConsumed = false
     isTransitive = true
 }
 
-val unpackSharedRuntimeForDev by tasks.registering(Sync::class) {
+val unpackSharedRuntimeForDev = tasks.register<Sync>("unpackSharedRuntimeForDev") {
     val sharedArtifacts = sharedRuntimeArtifacts.incoming.artifactView {
         componentFilter { shouldEmbedInForgeDevMod(it) }
     }.files
@@ -115,7 +115,7 @@ val unpackSharedRuntimeForDev by tasks.registering(Sync::class) {
 val sharedRuntimeSourceSet = sourceSets.create("sharedRuntime")
 sharedRuntimeSourceSet.output.dir(mapOf("builtBy" to unpackSharedRuntimeForDev), unpackedSharedRuntimeDir)
 
-val generateMoeMusicForgeBuildInfo by tasks.registering {
+val generateMoeMusicForgeBuildInfo = tasks.register("generateMoeMusicForgeBuildInfo") {
     val modVersion = project.version.toString()
     inputs.property("modVersion", modVersion)
     outputs.dir(generatedBuildInfoDir)
@@ -138,7 +138,7 @@ val generateMoeMusicForgeBuildInfo by tasks.registering {
     }
 }
 
-val generateMoeMusicPlatformBuildInfo by tasks.registering {
+val generateMoeMusicPlatformBuildInfo = tasks.register("generateMoeMusicPlatformBuildInfo") {
     inputs.property("platformCommonVersion", platformCommonVersion)
     outputs.dir(generatedBuildInfoDir)
 
@@ -195,7 +195,7 @@ tasks.named<KotlinJvmCompile>("compileKotlin") {
     dependsOn(generateMoeMusicForgeBuildInfo, generateMoeMusicPlatformBuildInfo)
 }
 
-val cleanupLegacyForgeResourceClasses by tasks.registering(Delete::class) {
+val cleanupLegacyForgeResourceClasses = tasks.register<Delete>("cleanupLegacyForgeResourceClasses") {
     delete(
         fileTree(mainResourcesOutputDir.get().asFile) {
             include("**/*.class")
@@ -204,7 +204,7 @@ val cleanupLegacyForgeResourceClasses by tasks.registering(Delete::class) {
     )
 }
 
-val assembleForgeDevModRoot by tasks.registering(Sync::class) {
+val assembleForgeDevModRoot = tasks.register<Sync>("assembleForgeDevModRoot") {
     dependsOn(tasks.named("classes"))
     from(sourceSets.main.map { it.output })
     from(sharedRuntimeSourceSet.output)
@@ -246,7 +246,7 @@ val renameBadPacketsForgeForDev = renamer.classes("renameBadPacketsForgeForDev")
     archiveClassifier.set("renamed")
 }
 
-val generatePatchedBadPacketsMixinConfig by tasks.registering {
+val generatePatchedBadPacketsMixinConfig = tasks.register("generatePatchedBadPacketsMixinConfig") {
     outputs.file(patchedBadPacketsMixinConfig)
 
     doLast {
@@ -276,7 +276,7 @@ val generatePatchedBadPacketsMixinConfig by tasks.registering {
     }
 }
 
-val patchBadPacketsForgeForDev by tasks.registering(Jar::class) {
+val patchBadPacketsForgeForDev = tasks.register<Jar>("patchBadPacketsForgeForDev") {
     dependsOn(renameBadPacketsForgeForDev, generatePatchedBadPacketsMixinConfig)
     archiveFileName.set("badpackets-$badPacketsForgeVersion-dev.jar")
     destinationDirectory.set(layout.buildDirectory.dir("generated/badpacketsDevJar"))
@@ -403,7 +403,7 @@ tasks.withType<JavaExec>().configureEach {
     }
 }
 
-val installShadowJar by tasks.registering(ShadowJar::class) {
+val installShadowJar = tasks.register<ShadowJar>("installShadowJar") {
     dependsOn(tasks.named("jar"))
     archiveBaseName.set("$modArtifactBaseName-forge")
     archiveClassifier.set("dev-shadow")
