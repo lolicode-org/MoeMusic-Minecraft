@@ -148,6 +148,7 @@ val buildFabricFullJar by tasks.registering(ShadowJar::class) {
         exclude(dependency("org.jetbrains.kotlin:kotlin-reflect.*"))
         exclude(dependency("org.jetbrains.kotlinx:kotlinx-coroutines-core.*"))
         exclude(dependency("org.jetbrains.kotlinx:kotlinx-serialization-core.*"))
+        exclude(dependency("org.jetbrains.kotlinx:kotlinx-serialization-json.*"))
         exclude(dependency("org.jetbrains.kotlinx:kotlinx-datetime.*"))
         exclude(dependency("org.mozilla:rhino-engine"))
         exclude(dependency("org.mozilla:rhino"))
