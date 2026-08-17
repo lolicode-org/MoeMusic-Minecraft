@@ -110,6 +110,12 @@ object ClientPlaybackHandler {
     val lastQueueClearResponse: QueueClearResponse?
         get() = runtime.lastQueueClearResponse
 
+    val activeProtocolVersion: Int
+        get() = runtime.activeProtocolVersion
+
+    val supportsQueueClear: Boolean
+        get() = runtime.activeProtocolVersion >= 3
+
     val lastPlaybackControlResponse: PlaybackControlResponse?
         get() = runtime.lastPlaybackControlResponse
 
