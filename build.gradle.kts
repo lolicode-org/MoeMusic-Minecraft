@@ -10,6 +10,44 @@ plugins {
 group = "org.lolicode.moemusic"
 version = libs.versions.moemusic.velocity.get()
 
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url = uri("https://repo.papermc.io/repository/maven-public/")
+    }
+    maven {
+        name = "Lolicode Releases"
+        url = uri("https://maven.lolicode.org/releases")
+        content { includeGroupByRegex("org\\.lolicode.*") }
+    }
+    maven {
+        name = "Lolicode Snapshots"
+        url = uri("https://maven.lolicode.org/snapshots")
+        content { includeGroupByRegex("org\\.lolicode.*") }
+    }
+    maven {
+        name = "GitHubPackages"
+        url = uri("https://maven.pkg.github.com/lolicode-org/MoeMusic")
+        credentials {
+            username = providers.gradleProperty("gpr.user")
+                .orElse(providers.environmentVariable("GITHUB_ACTOR"))
+                .orElse("")
+                .get()
+            password = providers.gradleProperty("gpr.key")
+                .orElse(providers.environmentVariable("GITHUB_PACKAGES_TOKEN"))
+                .orElse(providers.environmentVariable("PACKAGES_READ_TOKEN"))
+                .orElse(providers.environmentVariable("GITHUB_TOKEN"))
+                .orElse("")
+                .get()
+        }
+        content { includeGroupByRegex("org\\.lolicode.*") }
+    }
+    maven {
+        url = uri("https://jitpack.io")
+    }
+}
+
 val velocityApiVersion = providers.gradleProperty("velocityApiVersion")
     .orElse(libs.versions.velocity.api)
     .get()
