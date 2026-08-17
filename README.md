@@ -46,7 +46,12 @@ MoeMusic combines an extensible playback engine with Velocity proxy capabilities
 
 ## Supported Versions
 
-- Velocity 4.0.0 and newer.
+- Velocity 4.0.0 and newer. 3.x may work too but there are no guarantees.
+
+> [!NOTE]
+> Although velocity has no restrictions on the back-end Minecraft server version,
+> the client mod adapter supports only 1.18-1.18.2, 1.19-1.19.2, 1.20(.1), 1.21(.1), and all versions after 26.1.
+> Using this plugin on any other version may require additional cross-version compatibility plugins, e.g. ViaVersion.
 
 ---
 
