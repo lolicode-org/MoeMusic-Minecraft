@@ -1,0 +1,199 @@
+name: publish all platforms
+
+on:
+  workflow_dispatch:
+    inputs:
+      # Minecraft Mod Branches
+      branch_26_2:
+        description: 'Publish version/26.2'
+        type: boolean
+        required: false
+        default: true
+      branch_26_1:
+        description: 'Publish version/26.1'
+        type: boolean
+        required: false
+        default: true
+      branch_1_21_1:
+        description: 'Publish version/1.21.1'
+        type: boolean
+        required: false
+        default: true
+      branch_1_20_1:
+        description: 'Publish version/1.20.1'
+        type: boolean
+        required: false
+        default: true
+      branch_1_19:
+        description: 'Publish version/1.19'
+        type: boolean
+        required: false
+        default: true
+      branch_1_18_2:
+        description: 'Publish version/1.18.2'
+        type: boolean
+        required: false
+        default: true
+
+      # Server Plugin Branches
+      branch_spigot:
+        description: 'Publish spigot'
+        type: boolean
+        required: false
+        default: true
+
+      # Mod Loaders
+      loader_fabric:
+        description: 'Publish Fabric jar'
+        type: boolean
+        required: false
+        default: true
+      loader_neoforge:
+        description: 'Publish NeoForge jar'
+        type: boolean
+        required: false
+        default: true
+      loader_forge:
+        description: 'Publish Forge jar (1.18.2 - 1.21.1)'
+        type: boolean
+        required: false
+        default: true
+
+      # Release Settings
+      version_type:
+        description: 'Release channel'
+        type: choice
+        options: [stable, beta, alpha]
+        required: true
+        default: 'stable'
+      changelog_branch:
+        description: 'Branch to read CHANGELOG.md from'
+        type: string
+        required: false
+        default: 'changelog'
+      publish_curseforge:
+        description: 'Publish to CurseForge'
+        type: boolean
+        required: false
+        default: false
+      dry_run:
+        description: 'Build and validate publish tasks without uploading'
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  dispatch:
+    name: dispatch releases
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: dispatch workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version_type="${{ inputs.version_type }}"
+          changelog_branch="${{ inputs.changelog_branch }}"
+          publish_curseforge="${{ inputs.publish_curseforge }}"
+          dry_run="${{ inputs.dry_run }}"
+          loader_fabric="${{ inputs.loader_fabric }}"
+          loader_neoforge="${{ inputs.loader_neoforge }}"
+          loader_forge="${{ inputs.loader_forge }}"
+
+          repo="${{ github.repository }}"
+          server_url="${{ github.server_url }}"
+
+          declare -a branches=()
+
+          if [[ "${{ inputs.branch_26_2 }}" == "true" ]]; then
+            branches+=("version/26.2")
+          fi
+          if [[ "${{ inputs.branch_26_1 }}" == "true" ]]; then
+            branches+=("version/26.1")
+          fi
+          if [[ "${{ inputs.branch_1_21_1 }}" == "true" ]]; then
+            branches+=("version/1.21.1")
+          fi
+          if [[ "${{ inputs.branch_1_20_1 }}" == "true" ]]; then
+            branches+=("version/1.20.1")
+          fi
+          if [[ "${{ inputs.branch_1_19 }}" == "true" ]]; then
+            branches+=("version/1.19")
+          fi
+          if [[ "${{ inputs.branch_1_18_2 }}" == "true" ]]; then
+            branches+=("version/1.18.2")
+          fi
+          if [[ "${{ inputs.branch_spigot }}" == "true" ]]; then
+            branches+=("spigot")
+          fi
+
+          if [[ ${#branches[@]} -eq 0 ]]; then
+            echo "No target branches selected." >&2
+            exit 1
+          fi
+
+          echo "Dispatching release workflows for ${#branches[@]} target branch(es)..."
+
+          {
+            echo "### 🚀 Multi-Platform Release Dispatch Summary"
+            echo ""
+            echo "| Branch | Target Workflow | Parameters | Actions Link |"
+            echo "| --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for branch in "${branches[@]}"; do
+            echo "==> Dispatching branch: $branch"
+
+            if [[ "$branch" == "spigot" ]]; then
+              workflow_file="publish.yml"
+
+              gh workflow run "$workflow_file" \
+                --ref "$branch" \
+                -f version_type="$version_type" \
+                -f changelog_branch="$changelog_branch" \
+                -f publish_curseforge="$publish_curseforge" \
+                -f dry_run="$dry_run"
+
+              param_summary="channel: \`$version_type\`, dry_run: \`$dry_run\`"
+            else
+              workflow_file="publish-mods.yml"
+
+              args=(
+                -f version_type="$version_type"
+                -f changelog_branch="$changelog_branch"
+                -f publish_curseforge="$publish_curseforge"
+                -f dry_run="$dry_run"
+                -f loader_fabric="$loader_fabric"
+              )
+
+              case "$branch" in
+                "version/1.18.2"|"version/1.19"|"version/1.20.1")
+                  args+=(-f loader_forge="$loader_forge")
+                  param_summary="fabric: \`$loader_fabric\`, forge: \`$loader_forge\`, channel: \`$version_type\`, dry_run: \`$dry_run\`"
+                  ;;
+                "version/1.21.1")
+                  args+=(-f loader_forge="$loader_forge" -f loader_neoforge="$loader_neoforge")
+                  param_summary="fabric: \`$loader_fabric\`, forge: \`$loader_forge\`, neoforge: \`$loader_neoforge\`, channel: \`$version_type\`, dry_run: \`$dry_run\`"
+                  ;;
+                *)
+                  args+=(-f loader_neoforge="$loader_neoforge")
+                  param_summary="fabric: \`$loader_fabric\`, neoforge: \`$loader_neoforge\`, channel: \`$version_type\`, dry_run: \`$dry_run\`"
+                  ;;
+              esac
+
+              gh workflow run "$workflow_file" --ref "$branch" "${args[@]}"
+            fi
+
+            actions_url="${server_url}/${repo}/actions/workflows/${workflow_file}?query=branch%3A${branch//\//%2F}"
+            echo "Dispatched $workflow_file on $branch successfully."
+            echo "| \`$branch\` | \`$workflow_file\` | $param_summary | [View Runs]($actions_url) |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          echo ""
+          echo "All workflows dispatched successfully!"
