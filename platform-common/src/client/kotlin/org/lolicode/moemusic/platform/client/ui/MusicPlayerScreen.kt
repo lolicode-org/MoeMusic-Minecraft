@@ -648,6 +648,8 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
 
     private fun canViewQueue(): Boolean = hasQueueViewPermission()
 
+    private fun canClearQueue(): Boolean = canViewQueue() && ClientPlaybackHandler.supportsQueueClear
+
     private fun canSubmit(): Boolean = hasSubmitPermission()
 
     private fun canSubmitSkipAutoplay(): Boolean =
@@ -1153,7 +1155,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
             rowActionMenu = RowActionMenuState(margin + 64, contentY + 18, options)
             rebuildScreenWidgets()
         }
-        clearButton.active = canViewQueue()
+        clearButton.active = canClearQueue()
         addRenderableWidget(clearButton)
 
         val queueUpButton = button(controller.x, controller.upButtonY, controller.width, listControllerBtnH, McText.literal("▲")) {
@@ -2603,7 +2605,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
                 origin = origin,
             )
         )
-        if (origin == TrackListVariant.QUEUE && hasQueueControlPermission() && !track.submittedByUserName.isNullOrBlank()) {
+        if (origin == TrackListVariant.QUEUE && hasQueueControlPermission() && canClearQueue() && !track.submittedByUserName.isNullOrBlank()) {
             add(
                 RowActionMenuOption(tr("screen.moemusic.queue.clear_user_tracks", track.submittedByUserName)) {
                     queueError = null
