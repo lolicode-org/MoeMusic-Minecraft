@@ -34,7 +34,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.core)
     runtimeOnly(libs.kotlinx.serialization.json)
-    implementation(libs.lavaplayer)
     implementation(libs.ktoml.core)
     implementation(libs.ktoml.file)
     compileOnly(libs.slf4j.api)
