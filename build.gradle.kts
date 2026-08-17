@@ -481,8 +481,15 @@ allprojects {
             content { includeGroup("me.shedaniel.cloth") }
         }
         maven {
-            name = "Lolicode on Codeberg"
-            url = uri("https://codeberg.org/api/packages/lolicode/maven")
+            name = "Lolicode Releases"
+            url = uri("https://maven.lolicode.org/releases")
+            content {
+                includeGroupByRegex("org\\.lolicode.*")
+            }
+        }
+        maven {
+            name = "Lolicode Snapshots"
+            url = uri("https://maven.lolicode.org/snapshots")
             content {
                 includeGroupByRegex("org\\.lolicode.*")
             }
