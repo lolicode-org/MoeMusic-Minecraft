@@ -1,5 +1,6 @@
 package org.lolicode.moemusic.platform.client.ui
 
+import com.mojang.blaze3d.Blaze3D
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.screens.Screen
@@ -7,6 +8,7 @@ import net.minecraft.network.chat.Component
 import net.minecraft.util.FormattedCharSequence
 import org.lolicode.moemusic.core.plugin.PluginDiscoveryReport
 import org.lolicode.moemusic.platform.text.McText
+import java.awt.Desktop
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -139,11 +141,11 @@ class PluginIssueScreen(
     private fun openDirectory(path: Path) {
         try {
             Files.createDirectories(path)
-            com.mojang.blaze3d.Blaze3D.openPath(path)
+            Blaze3D.openPath(path)
         } catch (_: Throwable) {
             try {
-                if (java.awt.Desktop.isDesktopSupported()) {
-                    java.awt.Desktop.getDesktop().open(path.toFile())
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().open(path.toFile())
                 }
             } catch (_: Throwable) {
                 // Ignore

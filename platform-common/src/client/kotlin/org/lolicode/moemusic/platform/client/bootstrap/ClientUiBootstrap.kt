@@ -144,44 +144,79 @@ object ClientRuntimeBootstrap {
     }
 }
 
-object ClientShortcutController {
+object ClientPluginIssuePresenter {
 
-    private const val VOLUME_STEP_PERCENT = 5
     private var issueScreenPending = true
 
-    fun onConnectionJoined(mc: Minecraft, keyBindings: MoeMusicClientKeyBindings) {
+    fun handleClientTick(mc: Minecraft) {
+        if (!issueScreenPending || mc.player != null || !isInitialScreenReady(mc)) return
         issueScreenPending = false
+        val report = ClientRuntimeBootstrap.pendingDiscoveryReport
+            ?: PluginManager.lastDiscoveryReport
+        if (report != null && report.hasIssues) {
+            val currentScreen = mc.screen
+            logger.info(
+                "Displaying PluginIssueScreen for {} plugin issue(s)",
+                report.duplicatePlugins.size + report.incompatiblePlugins.size + report.failedPlugins.size,
+            )
+            mc.setScreen(
+                PluginIssueScreen(
+                    parent = currentScreen,
+                    report = report,
+                    gameDir = ClientRuntimeBootstrap.resolvedGameDir ?: mc.gameDirectory.toPath(),
+                    configDir = ClientRuntimeBootstrap.resolvedConfigDir,
+                )
+            )
+        }
+    }
+
+    fun dismiss() {
+        issueScreenPending = false
+    }
+}
+
+object ClientConnectionCoordinator {
+
+    fun onConnectionJoined(mc: Minecraft, openGuiKey: KeyMapping) {
+        ClientPluginIssuePresenter.dismiss()
         ClientPlaybackHandler.onConnectionJoined()
-        maybeShowOpenGuiTip(mc, keyBindings.openGuiKey)
+        maybeShowOpenGuiTip(mc, openGuiKey)
     }
 
     fun onConnectionDisconnected() {
         ClientPlaybackHandler.onConnectionDisconnected()
     }
 
-    fun handleEndClientTick(mc: Minecraft, keyBindings: MoeMusicClientKeyBindings) {
-        if (issueScreenPending && mc.player == null && isInitialScreenReady(mc)) {
-            val report = ClientRuntimeBootstrap.pendingDiscoveryReport
-                ?: PluginManager.lastDiscoveryReport
-            if (report != null && report.hasIssues) {
-                issueScreenPending = false
-                val currentScreen = mc.screen
-                logger.info(
-                    "Displaying PluginIssueScreen for {} plugin issue(s)",
-                    report.duplicatePlugins.size + report.incompatiblePlugins.size + report.failedPlugins.size,
-                )
-                mc.setScreen(
-                    PluginIssueScreen(
-                        parent = currentScreen,
-                        report = report,
-                        gameDir = ClientRuntimeBootstrap.resolvedGameDir ?: mc.gameDirectory.toPath(),
-                        configDir = ClientRuntimeBootstrap.resolvedConfigDir,
-                    )
-                )
-                return
-            }
-        }
+    private fun maybeShowOpenGuiTip(mc: Minecraft, openGuiKey: KeyMapping) {
+        if (!ClientPlaybackHandler.isPlaybackEnabledForCurrentServer(mc)) return
+        if (ModConfigManager.config.client.joinShortcutTipShown) return
 
+        showWrappedSystemToast(
+            mc,
+            ClientToastIds.openGuiTip,
+            McText.translatable("tip.moemusic.open_gui.title"),
+            McText.translatable(
+                "tip.moemusic.open_gui.body",
+                openGuiKey.translatedKeyMessage,
+            ),
+        )
+        showPersistentRuntimeWarning(
+            mc,
+            McText.translatable("tip.moemusic.open_gui.title"),
+            McText.translatable(
+                "tip.moemusic.open_gui.body",
+                openGuiKey.translatedKeyMessage,
+            ),
+        )
+        ModConfigManager.updateClient { client -> client.copy(joinShortcutTipShown = true) }
+    }
+}
+
+object ClientShortcutController {
+
+    private const val VOLUME_STEP_PERCENT = 5
+
+    fun handleEndClientTick(mc: Minecraft, keyBindings: MoeMusicClientKeyBindings) {
         while (keyBindings.openGuiKey.consumeClick()) {
             if (mc.screen == null) {
                 openMusicPlayerScreen(mc)
@@ -220,30 +255,6 @@ object ClientShortcutController {
                 MusicPlayerScreen()
             }
         )
-    }
-
-    private fun maybeShowOpenGuiTip(mc: Minecraft, openGuiKey: KeyMapping) {
-        if (!ClientPlaybackHandler.isPlaybackEnabledForCurrentServer(mc)) return
-        if (ModConfigManager.config.client.joinShortcutTipShown) return
-
-        showWrappedSystemToast(
-            mc,
-            ClientToastIds.openGuiTip,
-            McText.translatable("tip.moemusic.open_gui.title"),
-            McText.translatable(
-                "tip.moemusic.open_gui.body",
-                openGuiKey.translatedKeyMessage,
-            ),
-        )
-        showPersistentRuntimeWarning(
-            mc,
-            McText.translatable("tip.moemusic.open_gui.title"),
-            McText.translatable(
-                "tip.moemusic.open_gui.body",
-                openGuiKey.translatedKeyMessage,
-            ),
-        )
-        ModConfigManager.updateClient { client -> client.copy(joinShortcutTipShown = true) }
     }
 
     private fun handlePlayPauseKey(mc: Minecraft) {
