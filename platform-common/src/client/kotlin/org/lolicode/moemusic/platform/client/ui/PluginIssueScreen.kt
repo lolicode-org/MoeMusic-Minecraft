@@ -5,10 +5,12 @@ import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.network.chat.Component
 import net.minecraft.util.FormattedCharSequence
+import net.minecraft.Util
 import org.lolicode.moemusic.core.plugin.PluginDiscoveryReport
 import org.lolicode.moemusic.platform.text.McText
 import java.nio.file.Files
 import java.nio.file.Path
+import java.awt.Desktop
 
 /**
  * Startup warning screen shown when plugin issues (incompatible API, duplicate IDs, corrupt jars)
@@ -143,11 +145,11 @@ class PluginIssueScreen(
     private fun openDirectory(path: Path) {
         try {
             Files.createDirectories(path)
-            net.minecraft.Util.getPlatform().openFile(path.toFile())
+            Util.getPlatform().openFile(path.toFile())
         } catch (_: Throwable) {
             try {
-                if (java.awt.Desktop.isDesktopSupported()) {
-                    java.awt.Desktop.getDesktop().open(path.toFile())
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().open(path.toFile())
                 }
             } catch (_: Throwable) {
                 // Ignore
