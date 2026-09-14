@@ -9,6 +9,7 @@ import org.lolicode.moemusic.core.config.ClientVolume
 import org.lolicode.moemusic.core.config.ModConfigManager
 import org.lolicode.moemusic.core.contentfilter.ContentFilterRuntime
 import org.lolicode.moemusic.core.i18n.Localization
+import org.lolicode.moemusic.core.plugin.PluginDiscoveryReport
 import org.lolicode.moemusic.core.plugin.PluginManager
 import org.lolicode.moemusic.core.protocol.proto.PlaybackControlAction
 import org.lolicode.moemusic.platform.client.network.ClientNetworkSetup
@@ -20,6 +21,7 @@ import org.lolicode.moemusic.platform.client.ui.*
 import org.lolicode.moemusic.platform.client.ui.config.ConfigScreenAccess
 import org.lolicode.moemusic.platform.runtime.MoePlatform
 import org.lolicode.moemusic.platform.text.McText
+import org.slf4j.LoggerFactory
 import java.nio.file.Path
 
 data class MoeMusicClientKeyBindings(
@@ -88,13 +90,39 @@ object MoeMusicClientKeyBindingRegistry {
         )
 }
 
+private val logger = LoggerFactory.getLogger("MoeMusic/Client")
+
+private fun isInitialScreenReady(mc: Minecraft): Boolean {
+    if (mc.overlay != null) return false
+    val current = mc.screen ?: return false
+    return current is net.minecraft.client.gui.screens.TitleScreen || current !is net.minecraft.client.gui.screens.GenericMessageScreen
+}
+
 object ClientRuntimeBootstrap {
 
+    var pendingDiscoveryReport: PluginDiscoveryReport? = null
+        private set
+    var resolvedGameDir: Path? = null
+        private set
+    var resolvedConfigDir: Path? = null
+        private set
+
     fun onClientStarted(configDir: Path, gameDir: Path? = null) {
+        resolvedConfigDir = configDir
+        resolvedGameDir = gameDir
         LavaPlayerNativeBootstrap.configure(configDir = configDir, gameDir = gameDir)
         ModConfigManager.load(configDir)
         ContentFilterRuntime.applyConfig(ModConfigManager.config)
-        PluginManager.initialize(configDir)
+        val report = PluginManager.initialize(configDir)
+        if (report.hasIssues) {
+            pendingDiscoveryReport = report
+            logger.warn(
+                "Plugin issues detected during client discovery: {} duplicate(s), {} incompatible, {} failure(s)",
+                report.duplicatePlugins.size,
+                report.incompatiblePlugins.size,
+                report.failedPlugins.size,
+            )
+        }
         Localization.validateConfiguredDefaultLanguage()
         ClientVolumeRuntime.initializeConfiguredVolume(ModConfigManager.config.client.volume)
         MoePlatform.clientInitIfNeeded(ClientPlaybackServiceImpl, ClientRequestServiceImpl)
@@ -114,8 +142,10 @@ object ClientRuntimeBootstrap {
 object ClientShortcutController {
 
     private const val VOLUME_STEP_PERCENT = 5
+    private var issueScreenPending = true
 
     fun onConnectionJoined(mc: Minecraft, keyBindings: MoeMusicClientKeyBindings) {
+        issueScreenPending = false
         ClientPlaybackHandler.onConnectionJoined()
         maybeShowOpenGuiTip(mc, keyBindings.openGuiKey)
     }
@@ -125,6 +155,28 @@ object ClientShortcutController {
     }
 
     fun handleEndClientTick(mc: Minecraft, keyBindings: MoeMusicClientKeyBindings) {
+        if (issueScreenPending && mc.player == null && isInitialScreenReady(mc)) {
+            val report = ClientRuntimeBootstrap.pendingDiscoveryReport
+                ?: PluginManager.lastDiscoveryReport
+            if (report != null && report.hasIssues) {
+                issueScreenPending = false
+                val currentScreen = mc.screen
+                logger.info(
+                    "Displaying PluginIssueScreen for {} plugin issue(s)",
+                    report.duplicatePlugins.size + report.incompatiblePlugins.size + report.failedPlugins.size,
+                )
+                mc.setScreen(
+                    PluginIssueScreen(
+                        parent = currentScreen,
+                        report = report,
+                        gameDir = ClientRuntimeBootstrap.resolvedGameDir ?: mc.gameDirectory.toPath(),
+                        configDir = ClientRuntimeBootstrap.resolvedConfigDir,
+                    )
+                )
+                return
+            }
+        }
+
         while (keyBindings.openGuiKey.consumeClick()) {
             if (mc.screen == null) {
                 openMusicPlayerScreen(mc)
