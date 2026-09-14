@@ -15,7 +15,18 @@ This document serves as working guidance for AI agents and developers working on
 - `:neoforge` (and `:forge` on older branches) owns NeoForge-only bootstrap, lifecycle wiring, permission bridge, and config-screen integration.
 - **Dependency Guard**: Keep loader-specific APIs and dependencies out of `:platform-common` unless the public API is truly loader-neutral.
 
-## Minecraft Platform Adaptation Guidelines (Minecraft 26.2)
+## Minecraft Platform Adaptation Guidelines (Minecraft 26.3)
+
+### Replace GLFW with SDL
+Mojang has replaced GLFW with SDL in 26.3. MoeMusic does not directly use any GLFW method, but worth keeping in mind.
+
+### Keyboard
+`InputConstants.Type.KEYSYM` -> `InputConstants.Type.KEYBOARD`. That's part of the SDL migration mentioned above.
+
+**Avoid** using literal number for keycode: they're different on GLFW and SDL. To reduce future maintenance cost, use InputConstants.KEY_xxx.
+
+---
+Below are 26.2 concepts. Most still apply to 26.3. Check carefully if you notice any mismatch.
 
 ### Resource & Command Identifiers
 - Use `net.minecraft.resources.Identifier`.

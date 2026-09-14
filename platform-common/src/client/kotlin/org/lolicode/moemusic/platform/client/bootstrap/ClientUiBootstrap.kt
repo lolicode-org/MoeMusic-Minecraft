@@ -43,7 +43,7 @@ object MoeMusicClientKeyBindingRegistry {
             openGuiKey = registerKeyMapping(
                 KeyMapping(
                     "key.moemusic.open_gui",
-                    InputConstants.Type.KEYSYM,
+                    InputConstants.Type.KEYBOARD,
                     InputConstants.KEY_M,
                     keyCategory,
                 )
@@ -51,7 +51,7 @@ object MoeMusicClientKeyBindingRegistry {
             openConfigKey = registerKeyMapping(
                 KeyMapping(
                     "key.moemusic.open_config",
-                    InputConstants.Type.KEYSYM,
+                    InputConstants.Type.KEYBOARD,
                     -1,
                     keyCategory,
                 )
@@ -59,7 +59,7 @@ object MoeMusicClientKeyBindingRegistry {
             playPauseKey = registerKeyMapping(
                 KeyMapping(
                     "key.moemusic.play_pause",
-                    InputConstants.Type.KEYSYM,
+                    InputConstants.Type.KEYBOARD,
                     InputConstants.KEY_PAUSE,
                     keyCategory,
                 )
@@ -67,7 +67,7 @@ object MoeMusicClientKeyBindingRegistry {
             nextTrackKey = registerKeyMapping(
                 KeyMapping(
                     "key.moemusic.next_track",
-                    InputConstants.Type.KEYSYM,
+                    InputConstants.Type.KEYBOARD,
                     -1,
                     keyCategory,
                 )
@@ -75,7 +75,7 @@ object MoeMusicClientKeyBindingRegistry {
             volumeUpKey = registerKeyMapping(
                 KeyMapping(
                     "key.moemusic.volume_up",
-                    InputConstants.Type.KEYSYM,
+                    InputConstants.Type.KEYBOARD,
                     InputConstants.KEY_PAGEUP,
                     keyCategory,
                 )
@@ -83,7 +83,7 @@ object MoeMusicClientKeyBindingRegistry {
             volumeDownKey = registerKeyMapping(
                 KeyMapping(
                     "key.moemusic.volume_down",
-                    InputConstants.Type.KEYSYM,
+                    InputConstants.Type.KEYBOARD,
                     InputConstants.KEY_PAGEDOWN,
                     keyCategory,
                 )
