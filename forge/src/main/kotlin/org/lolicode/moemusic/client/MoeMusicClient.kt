@@ -16,6 +16,8 @@ import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent
 import net.minecraftforge.fml.loading.FMLPaths
 import org.lolicode.moemusic.MoeMusic
 import org.lolicode.moemusic.MoeMusicForgeBuildInfo
+import org.lolicode.moemusic.platform.client.bootstrap.ClientConnectionCoordinator
+import org.lolicode.moemusic.platform.client.bootstrap.ClientPluginIssuePresenter
 import org.lolicode.moemusic.platform.client.bootstrap.ClientRuntimeBootstrap
 import org.lolicode.moemusic.platform.client.bootstrap.ClientShortcutController
 import org.lolicode.moemusic.platform.client.bootstrap.MoeMusicClientKeyBindingRegistry
@@ -113,16 +115,18 @@ object MoeMusicClient {
     private fun onClientLoggedIn(event: ClientPlayerNetworkEvent.LoggingIn) {
         ClientNetworkSetup.advertiseClientChannels()
         val bindings = keyBindings ?: return
-        ClientShortcutController.onConnectionJoined(Minecraft.getInstance(), bindings)
+        ClientConnectionCoordinator.onConnectionJoined(Minecraft.getInstance(), bindings.openGuiKey)
     }
 
     private fun onClientLoggedOut(event: ClientPlayerNetworkEvent.LoggingOut) {
-        ClientShortcutController.onConnectionDisconnected()
+        ClientConnectionCoordinator.onConnectionDisconnected()
     }
 
     private fun onClientTick(event: TickEvent.ClientTickEvent) {
         if (event.phase != TickEvent.Phase.END) return
+        val mc = Minecraft.getInstance()
+        ClientPluginIssuePresenter.handleClientTick(mc)
         val bindings = keyBindings ?: return
-        ClientShortcutController.handleEndClientTick(Minecraft.getInstance(), bindings)
+        ClientShortcutController.handleEndClientTick(mc, bindings)
     }
 }

@@ -17,6 +17,8 @@ import net.neoforged.neoforge.common.NeoForge
 import net.neoforged.neoforge.event.GameShuttingDownEvent
 import org.lolicode.moemusic.MoeMusic
 import org.lolicode.moemusic.MoeMusicNeoForgeBuildInfo
+import org.lolicode.moemusic.platform.client.bootstrap.ClientConnectionCoordinator
+import org.lolicode.moemusic.platform.client.bootstrap.ClientPluginIssuePresenter
 import org.lolicode.moemusic.platform.client.bootstrap.ClientRuntimeBootstrap
 import org.lolicode.moemusic.platform.client.bootstrap.ClientShortcutController
 import org.lolicode.moemusic.platform.client.bootstrap.MoeMusicClientKeyBindingRegistry
@@ -100,15 +102,17 @@ object MoeMusicClient {
     private fun onClientLoggedIn(event: ClientPlayerNetworkEvent.LoggingIn) {
         ClientNetworkSetup.advertiseClientChannels()
         if (!::keyBindings.isInitialized) return
-        ClientShortcutController.onConnectionJoined(Minecraft.getInstance(), keyBindings)
+        ClientConnectionCoordinator.onConnectionJoined(Minecraft.getInstance(), keyBindings.openGuiKey)
     }
 
     private fun onClientLoggedOut(event: ClientPlayerNetworkEvent.LoggingOut) {
-        ClientShortcutController.onConnectionDisconnected()
+        ClientConnectionCoordinator.onConnectionDisconnected()
     }
 
     private fun onClientTickPost(event: ClientTickEvent.Post) {
+        val mc = Minecraft.getInstance()
+        ClientPluginIssuePresenter.handleClientTick(mc)
         if (!::keyBindings.isInitialized) return
-        ClientShortcutController.handleEndClientTick(Minecraft.getInstance(), keyBindings)
+        ClientShortcutController.handleEndClientTick(mc, keyBindings)
     }
 }

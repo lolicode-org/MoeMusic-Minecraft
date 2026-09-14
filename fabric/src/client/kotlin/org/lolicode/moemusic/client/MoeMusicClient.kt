@@ -8,6 +8,8 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
 import net.fabricmc.loader.api.FabricLoader
 import org.lolicode.moemusic.MoeMusic
 import org.lolicode.moemusic.MoeMusicFabricBuildInfo
+import org.lolicode.moemusic.platform.client.bootstrap.ClientConnectionCoordinator
+import org.lolicode.moemusic.platform.client.bootstrap.ClientPluginIssuePresenter
 import org.lolicode.moemusic.platform.client.bootstrap.ClientRuntimeBootstrap
 import org.lolicode.moemusic.platform.client.bootstrap.ClientShortcutController
 import org.lolicode.moemusic.platform.client.bootstrap.MoeMusicClientKeyBindingRegistry
@@ -54,11 +56,11 @@ object MoeMusicClient : ClientModInitializer {
         // and show the shortcut tip once.
         ClientPlayConnectionEvents.JOIN.register { _, _, mc ->
             ClientNetworkSetup.advertiseClientChannels()
-            ClientShortcutController.onConnectionJoined(mc, keyBindings)
+            ClientConnectionCoordinator.onConnectionJoined(mc, keyBindings.openGuiKey)
         }
 
         ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
-            ClientShortcutController.onConnectionDisconnected()
+            ClientConnectionCoordinator.onConnectionDisconnected()
         }
 
         ClientLifecycleEvents.CLIENT_STOPPING.register {
@@ -66,6 +68,7 @@ object MoeMusicClient : ClientModInitializer {
         }
 
         ClientTickEvents.END_CLIENT_TICK.register { mc ->
+            ClientPluginIssuePresenter.handleClientTick(mc)
             ClientShortcutController.handleEndClientTick(mc, keyBindings)
         }
 
