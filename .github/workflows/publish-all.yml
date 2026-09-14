@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       # Minecraft Mod Branches
+      branch_26_3:
+        description: 'Publish version/26.3'
+        type: boolean
+        required: false
+        default: true
       branch_26_2:
         description: 'Publish version/26.2'
         type: boolean
@@ -116,6 +121,9 @@ jobs:
 
           declare -a branches=()
 
+          if [[ "${{ inputs.branch_26_3 }}" == "true" ]]; then
+            branches+=("version/26.3")
+          fi
           if [[ "${{ inputs.branch_26_2 }}" == "true" ]]; then
             branches+=("version/26.2")
           fi
