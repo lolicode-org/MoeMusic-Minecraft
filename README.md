@@ -116,15 +116,16 @@ The mod supports importing third-party music sources or extending functionality 
 
 Depending on how the developer built the plugin, it can be installed in one of the following ways:
 
-* **As a standalone plugin**:
-  1. Place the compatible plugin JAR file into the `config/moemusic/plugins/` directory of your server or single-player client (if the directory does not exist, launch the game once or create it manually).
-  2. Restart the game or server.
 * **As a standard mod**:
   1. Place the compatible plugin JAR file into the `mods/` directory of your server or single-player client (following the standard mod installation process).
   2. Restart the game or server.
+* **As a standalone plugin**:
+    1. Place the compatible plugin JAR file into the `config/moemusic/plugins/` directory of your server or single-player client (if the directory does not exist, launch the game once or create it manually).
+    2. Restart the game or server.
 
 > [!TIP]
-> Follow the plugin author's installation instructions. If they do not specify a method, try the two directories one at a time.
+> Usually, plugins built from our template should work in both ways mentioned above. It's recommended to install them as a mod, for easier management.
+> If the plugin author does not specify a method, try the two directories one at a time.
 
 > [!WARNING]
 > Plugins run as trusted local code. For security reasons, only install plugins from trusted sources.

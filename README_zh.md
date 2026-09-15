@@ -113,15 +113,16 @@ MoeMusic 由平台无关的核心库以及 Minecraft Mod 适配实现组成：
 
 根据插件作者的开发方式，插件通常有以下两种安装方式：
 
-* **作为独立插件安装**：
-  1. 将兼容的插件 JAR 文件放入服务器或单人游戏客户端的 `config/moemusic/plugins/` 目录中（如果该目录不存在，请先启动一次游戏或手动创建）。
-  2. 重启游戏或服务器。
 * **作为模组（Mod）安装**：
   1. 将兼容的插件 JAR 文件放入服务器或单人游戏客户端的 `mods/` 目录中（按照正常的模组安装流程）。
   2. 重启游戏或服务器。
+* **作为独立插件安装**：
+    1. 将兼容的插件 JAR 文件放入服务器或单人游戏客户端的 `config/moemusic/plugins/` 目录中（如果该目录不存在，请先启动一次游戏或手动创建）。
+    2. 重启游戏或服务器。
 
 > [!TIP]
-> 具体采用哪种方式，请参考插件作者的安装说明。若作者未作明确说明，您可以依次在两个目录下进行尝试。
+> 使用我们提供的插件模板构建的插件，可以以上述任意一种方式安装。为便于管理，通常推荐将其作为 mod 来安装。
+> 若作者未作明确说明，你可以使用上述两种方式依次尝试。
 
 > [!WARNING]
 > 插件将以本地受信任代码的形式执行。为了您的系统安全，请仅安装来自可信来源的插件。
@@ -145,6 +146,8 @@ MoeMusic 由平台无关的核心库以及 Minecraft Mod 适配实现组成：
 ```text
 /music <链接或ID>
 /music add <链接或ID>
+/music addById <源ID> <歌曲ID>
+/music select <源ID> <选择项ID>
 /music search [--source <源ID>] [--page <页码>] <搜索词>
 /music queue
 /music skip
@@ -157,8 +160,6 @@ MoeMusic 由平台无关的核心库以及 Minecraft Mod 适配实现组成：
 ### 管理员与管理命令
 ```text
 /music add --now <链接或ID>
-/music addById <源ID> <歌曲ID>
-/music select <源ID> <选择项ID>
 /music system
 /music reload all
 /music reload filter
