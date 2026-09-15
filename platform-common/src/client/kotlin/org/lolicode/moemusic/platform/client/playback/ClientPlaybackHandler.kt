@@ -38,6 +38,8 @@ object ClientPlaybackHandler {
     @Volatile
     private var clientProtocolVersion: Int = MoeMusicProtocol.VERSION
 
+    internal val autoSkipGuard = SingleplayerAutoSkipGuard()
+
     private val runtime = ClientPlaybackRuntime(
         platform = MinecraftPlaybackPlatform(),
         listener = MinecraftPlaybackListener(),
@@ -183,9 +185,15 @@ object ClientPlaybackHandler {
     fun currentParticipationState(): UserParticipationState? =
         runtime.currentParticipationState()
 
-    fun onConnectionJoined() = runtime.onConnectionJoined()
+    fun onConnectionJoined() {
+        autoSkipGuard.reset()
+        runtime.onConnectionJoined()
+    }
 
-    fun onConnectionDisconnected() = runtime.onConnectionDisconnected()
+    fun onConnectionDisconnected() {
+        autoSkipGuard.reset()
+        runtime.onConnectionDisconnected()
+    }
 
     fun syncParticipationWithCurrentConfig() = runtime.syncParticipationWithCurrentConfig()
 
@@ -282,13 +290,20 @@ object ClientPlaybackHandler {
 
     fun cacheSearchTabState(state: CachedSearchTabState?) = runtime.cacheSearchTabState(state)
 
-    fun clearContext() = runtime.clearContext()
+    fun clearContext() {
+        autoSkipGuard.cancelPending()
+        runtime.clearContext()
+    }
 
-    fun sendPlaybackControl(action: PlaybackControlAction, positionMs: Long = 0L): Long? =
-        runtime.sendPlaybackControl(action, positionMs)
+    fun sendPlaybackControl(action: PlaybackControlAction, positionMs: Long = 0L): Long? {
+        autoSkipGuard.cancelPending()
+        return runtime.sendPlaybackControl(action, positionMs)
+    }
 
-    internal fun beginPlaybackControlRequest(action: PlaybackControlAction, positionMs: Long = 0L): Deferred<PlaybackControlResponse>? =
-        runtime.beginPlaybackControlRequest(action, positionMs)
+    internal fun beginPlaybackControlRequest(action: PlaybackControlAction, positionMs: Long = 0L): Deferred<PlaybackControlResponse>? {
+        autoSkipGuard.cancelPending()
+        return runtime.beginPlaybackControlRequest(action, positionMs)
+    }
 
     fun sendContentFilterTrackAction(sourceId: String, trackId: String, note: String?, ban: Boolean): Long? =
         runtime.sendContentFilterTrackAction(sourceId, trackId, note, ban)
@@ -387,11 +402,7 @@ object ClientPlaybackHandler {
         }
 
         override fun onLocalPlaybackFailureFinal(track: TrackInfo, message: String) {
-            val minecraft = Minecraft.getInstance()
-            if (minecraft.singleplayerServer == null) return
-            minecraft.execute {
-                ClientPlaybackHandler.sendPlaybackControl(PlaybackControlAction.SKIP)
-            }
+            autoSkipGuard.onPlaybackFailure(track)
         }
 
         override fun showInstanceLockStandby(message: String) {
@@ -495,6 +506,7 @@ object ClientPlaybackHandler {
         }
 
         override fun onLocalPlaybackRecovered(track: TrackInfo) {
+            autoSkipGuard.reset()
             guiListener?.onLocalPlaybackRecovered(track)
         }
 
@@ -511,6 +523,9 @@ object ClientPlaybackHandler {
         }
 
         override fun onPlaybackSnapshotApplied() {
+            if (currentContext != null) {
+                autoSkipGuard.cancelPending()
+            }
             guiListener?.onPlaybackSnapshotApplied()
         }
     }
