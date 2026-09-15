@@ -1,5 +1,6 @@
 package org.lolicode.moemusic.platform.client.ui
 
+import com.mojang.blaze3d.platform.InputConstants
 import org.lolicode.moemusic.platform.text.McText
 
 import net.minecraft.client.Minecraft
@@ -2271,12 +2272,12 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
     }
 
     override fun keyPressed(event: KeyEvent): Boolean {
-        if (event.key() == 256 && currentTab == Tab.SEARCH && searchSourceDropdownOpen) {
+        if (event.key() == InputConstants.KEY_ESCAPE && currentTab == Tab.SEARCH && searchSourceDropdownOpen) {
             searchSourceDropdownOpen = false
             rebuildScreenWidgets()
             return true
         }
-        if (event.key() == 256) {
+        if (event.key() == InputConstants.KEY_ESCAPE) {
             onClose()
             return true
         }
@@ -3152,7 +3153,7 @@ class MusicPlayerScreen : Screen(TITLE), ClientPlaybackHandler.GuiListener {
         return allowedModes[(currentIndex + 1) % allowedModes.size]
     }
 
-    private fun isConfirmKey(key: Int): Boolean = key == 257 || key == 335
+    private fun isConfirmKey(key: Int): Boolean = key == InputConstants.KEY_RETURN || key == InputConstants.KEY_NUMPADENTER
 
     private fun addModeLabel(mode: TrackAddMode): String = when (mode) {
         TrackAddMode.NORMAL -> tr("screen.moemusic.quick_add.mode.normal")
