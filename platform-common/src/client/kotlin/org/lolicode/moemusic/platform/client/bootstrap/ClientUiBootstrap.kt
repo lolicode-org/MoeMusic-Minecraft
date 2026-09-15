@@ -56,7 +56,7 @@ object MoeMusicClientKeyBindingRegistry {
                 KeyMapping(
                     "key.moemusic.open_config",
                     InputConstants.Type.KEYBOARD,
-                    -1,
+                    InputConstants.UNKNOWN.value,
                     keyCategory,
                 )
             ),
@@ -72,7 +72,7 @@ object MoeMusicClientKeyBindingRegistry {
                 KeyMapping(
                     "key.moemusic.next_track",
                     InputConstants.Type.KEYBOARD,
-                    -1,
+                    InputConstants.UNKNOWN.value,
                     keyCategory,
                 )
             ),
