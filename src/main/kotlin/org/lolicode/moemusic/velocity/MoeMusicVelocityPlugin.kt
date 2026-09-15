@@ -33,8 +33,8 @@ import java.util.UUID
     id = "moemusic",
     name = "MoeMusic",
     version = MoeMusicVelocityPlugin.VERSION,
-    description = "Server-wide music playback for Velocity",
-    authors = ["Lolicode"],
+    description = "Global synced music playback for Velocity",
+    authors = ["KoishiMoe"],
 )
 class MoeMusicVelocityPlugin @Inject constructor(
     val proxy: ProxyServer,
@@ -202,7 +202,7 @@ class MoeMusicVelocityPlugin @Inject constructor(
     }
 
     companion object {
-        const val VERSION: String = "1.3.0"
+        const val VERSION: String = "1.5.0"
 
         internal lateinit var instance: MoeMusicVelocityPlugin
             private set
