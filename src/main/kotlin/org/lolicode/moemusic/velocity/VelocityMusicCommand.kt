@@ -878,6 +878,7 @@ class VelocityMusicCommand(
                         )
                     }
                 } catch (error: IllegalStateException) {
+                    plugin.logger.error("Failed to reload MoeMusic configuration.", error)
                     VelocityChat.failure(source, LocalizedText.key("error.moemusic.reload.failed", error.message ?: "unknown error"))
                 } catch (error: Exception) {
                     fail(source, error)
@@ -889,6 +890,7 @@ class VelocityMusicCommand(
                     ContentFilterRuleEditor.reloadFromDisk(ServerRuntimeCoordinator.configDir)
                     VelocityChat.success(source, LocalizedText.key("action.moemusic.filter.reloaded"))
                 } catch (error: IllegalStateException) {
+                    plugin.logger.error("Failed to reload MoeMusic filter configuration.", error)
                     VelocityChat.failure(source, LocalizedText.key("error.moemusic.reload.failed", error.message ?: "unknown error"))
                 } catch (error: Exception) {
                     fail(source, error)
@@ -1292,7 +1294,8 @@ class VelocityMusicCommand(
         if (UserFacingErrors.isExpected(error)) {
             plugin.logger.debug("MoeMusic command rejected: {}", error.message)
         } else {
-            plugin.logger.warn("MoeMusic command failed: {}", error.message, error)
+            val senderName = (source as? Player)?.username ?: "Console"
+            plugin.logger.error("MoeMusic command failed for {}: {}", senderName, error.message, error)
         }
         VelocityChat.failure(source, classify(source, error))
     }

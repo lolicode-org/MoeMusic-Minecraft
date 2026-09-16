@@ -75,7 +75,7 @@ class VelocityNetworkChannel(
 
             val inboundLimit = minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_C2S_PAYLOAD_BYTES)
             if (event.data.size > inboundLimit) {
-                plugin.logger.warn(
+                plugin.logger.debug(
                     "Dropping oversized C2S packet {} from {} (size={}, limit={})",
                     packetId,
                     player.uniqueId,
@@ -100,7 +100,10 @@ class VelocityNetworkChannel(
     override fun sendToServer(packetId: PacketId, payload: ByteArray) = Unit
 
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
-        if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) return
+        if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) {
+            plugin.logger.debug("Skipping packet {} for inactive/standby client session {}", packetId, user.displayName)
+            return
+        }
         val player = plugin.proxy.getPlayer(user.id).orElse(null) ?: return
         val identifier = identifiers[packetId] ?: return
         if (UserSessionRegistry.supportsFraming(user.id)) {
@@ -109,7 +112,8 @@ class VelocityNetworkChannel(
                     FramedPayloadCodec.encodeSingle(payload)
                 } catch (e: Exception) {
                     plugin.logger.error(
-                        "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                        "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}",
+                        e,
                     )
                     return
                 }
@@ -120,7 +124,8 @@ class VelocityNetworkChannel(
                 FramedPayloadCodec.encode(payload)
             } catch (e: Exception) {
                 plugin.logger.error(
-                    "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                    "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}",
+                    e,
                 )
                 return
             }
@@ -162,7 +167,8 @@ class VelocityNetworkChannel(
                     FramedPayloadCodec.encodeSingle(payload)
                 } catch (e: Exception) {
                     plugin.logger.error(
-                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size})",
+                        e,
                     )
                     null
                 }
@@ -173,7 +179,8 @@ class VelocityNetworkChannel(
                     FramedPayloadCodec.encode(payload)
                 } catch (e: Exception) {
                     plugin.logger.error(
-                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size})",
+                        e,
                     )
                     null
                 }
