@@ -887,6 +887,15 @@ object MoeMusicConfigScreen {
             defaultValue = defaultPermissions.rateLimitBypass,
         ) { newRateLimitBypassLevel = it }
 
+        var newSubmitDuplicateLevel = current.permissions.submitDuplicate
+        addPermissionLevelEntry(
+            category = permissionsCategory,
+            entryBuilder = entryBuilder,
+            labelKey = "config.moemusic.permissions.submit_duplicate",
+            initialValue = current.permissions.submitDuplicate,
+            defaultValue = defaultPermissions.submitDuplicate,
+        ) { newSubmitDuplicateLevel = it }
+
         var newHud = current.client.nowPlayingHud
         addHudEntries(hudCategory, entryBuilder, current.client.nowPlayingHud, defaultHud) { newHud = it }
         addSystemEntries(systemCategory, entryBuilder)
@@ -936,6 +945,7 @@ object MoeMusicConfigScreen {
                         contentFilterBypass = newContentFilterBypassLevel,
                         durationPolicyBypass = newDurationPolicyBypassLevel,
                         rateLimitBypass = newRateLimitBypassLevel,
+                        submitDuplicate = newSubmitDuplicateLevel,
                     ),
                     contentFilter = newContentFilter.copy(
                         exactTrackRules = exactTrackRules.toTrackRules(),
