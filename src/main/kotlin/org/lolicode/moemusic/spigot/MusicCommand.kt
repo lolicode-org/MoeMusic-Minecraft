@@ -240,15 +240,21 @@ class MusicCommand(
             args.isNotEmpty() -> args[0].toIntOrNull() ?: 1
             else -> 1
         }
+        val user = user(sender)
+        try {
+            ServerRuntimeCoordinator.rateLimitService.checkQueueRead(user)
+        } catch (error: Exception) {
+            fail(sender, error)
+            return
+        }
         val current = ServerRuntimeCoordinator.playbackController.currentContext?.track
-        val queued = ServerRuntimeCoordinator.queue.userQueueSnapshot()
-        if (current == null && queued.isEmpty()) return Chat.success(sender, LocalizedText.key("action.moemusic.queue.empty"))
+        val total = ServerRuntimeCoordinator.queue.userQueueSize()
+        if (current == null && total == 0) return Chat.success(sender, LocalizedText.key("action.moemusic.queue.empty"))
         val pageSize = 8
-        val total = queued.size
         val totalPages = if (total == 0) 1 else ((total - 1) / pageSize) + 1
         val clampedPage = parsedPage.coerceIn(1, totalPages)
         val offset = (clampedPage - 1) * pageSize
-        val pageTracks = queued.drop(offset).take(pageSize)
+        val pageTracks = ServerRuntimeCoordinator.queue.userQueueSlice(offset, pageSize)
         Chat.multiline(
             sender,
             buildList {
@@ -261,7 +267,7 @@ class MusicCommand(
                 } else {
                     add(Chat.legacy(SpigotChatFormatting.prefixed(
                         Chat.locale(sender),
-                        LocalizedText.key("action.moemusic.queue.header", queued.size + if (current == null) 0 else 1),
+                        LocalizedText.key("action.moemusic.queue.header", total + if (current == null) 0 else 1),
                         SpigotChatFormatting.Tone.SUCCESS,
                     )))
                 }
@@ -321,7 +327,7 @@ class MusicCommand(
         }
         if (args.size == 1) {
             val index = args[0].toIntOrNull() ?: return Chat.failure(sender, LocalizedText.key("error.moemusic.queue.invalid_index"))
-            val track = ServerRuntimeCoordinator.queue.userQueueSnapshot().getOrNull(index - 1)
+            val track = ServerRuntimeCoordinator.queue.getQueuedTrack(index - 1)
                 ?: return Chat.failure(sender, LocalizedText.key("error.moemusic.queue.invalid_index"))
             val outcome = ServerRuntimeCoordinator.userActionService.removeQueuedTrackByEntryId(
                 track.sourceId.orEmpty(),
@@ -355,7 +361,7 @@ class MusicCommand(
         if (hasPermission(sender, PermissionNodes.QUEUE_CONTROL)) {
             add("--all")
             addAll(Bukkit.getOnlinePlayers().map { it.name })
-            addAll(ServerRuntimeCoordinator.queue.userQueueSnapshot().mapNotNull { it.submittedByUserName })
+            addAll(ServerRuntimeCoordinator.queue.distinctSubmitterNames())
         }
     }
 
@@ -619,6 +625,12 @@ class MusicCommand(
         val sessionId = unquote(args[0])
         val page = args.getOrNull(1)?.toIntOrNull() ?: 1
         val u = user(sender)
+        try {
+            ServerRuntimeCoordinator.rateLimitService.checkSelection(u)
+        } catch (error: Exception) {
+            fail(sender, error)
+            return
+        }
         val bypass = u?.let { hasPermission(sender, PermissionNodes.QUEUE_CONTROL) } ?: true
         val session = SelectionSessionManager.getSession(sessionId, u?.id, bypass)
         if (session == null) {
