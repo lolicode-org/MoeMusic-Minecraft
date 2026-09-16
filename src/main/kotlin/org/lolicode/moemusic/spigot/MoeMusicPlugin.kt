@@ -32,6 +32,7 @@ class MoeMusicPlugin : JavaPlugin(), Listener {
 
     override fun onEnable() {
         instance = this
+        PaperLogFormatterPatcher.patch(description.name, logger)
         channel = SpigotNetworkChannel(this)
         channel.register()
 
