@@ -67,7 +67,7 @@ MoeMusic consists of the platform-agnostic core library and the Minecraft mod in
 - **Chat Command Controls**: A comprehensive set of chat commands for players and administrators.
 - **Vote Skip & Moderation**: Regular players can participate in vote skips, while moderators can perform immediate playback control (play now, pause, skip, stop, seek).
 - **Integrated Config Screen**: Provides config panels using Cloth Config and Mod Menu.
-- **Advanced Permission Integration**: Automatically detects and uses LuckPerms (NeoForge/Fabric) or the Fabric Permissions API (Fabric) for fine-grained permissions.
+- **Advanced Permission Integration**: Automatically detects and uses LuckPerms (NeoForge/Fabric) or the Fabric Permission API (Fabric) for fine-grained permissions.
 
 ---
 
@@ -94,7 +94,7 @@ Currently supported versions:
 - Fabric API
 - Fabric Language Kotlin
 - Mod Menu (optional, adds mod-list integration)
-- Fabric Permissions API (server-side, optional, enables advanced permission checks)
+- Any permission controller mod that implements `fabric-permissions-api-v0` or `fabric-permission-api-v1` (server-side, optional, enables fine-grained permissions)
 
 ### NeoForge / Forge
 - Kotlin for Forge
@@ -193,7 +193,7 @@ Configurations are written to `config/moemusic/moemusic.toml`.
 
 ## Permissions
 
-When LuckPerms or the Fabric Permissions API is not installed, MoeMusic checks fallback permission levels (0–5) defined in `moemusic.toml`. Levels 0–4 correspond to vanilla OP levels (0 = All, 1 = Mod, 2 = GM, 3 = Admin, 4 = OP). Setting a permission to level 5 completely disables it for all vanilla players, requiring a dedicated permission mod or the server console. Single-player world owners (for levels 0–4) and the server console bypass all checks.
+When no permission controller mod is installed, MoeMusic checks fallback permission levels (0–5) defined in `moemusic.toml`. Levels 0–4 correspond to vanilla OP levels (0 = All, 1 = Mod, 2 = GM, 3 = Admin, 4 = OP). Setting a permission to level 5 completely disables it for all vanilla players, requiring a dedicated permission mod or the server console. Single-player world owners (for levels 0–4) and the server console bypass all checks.
 
 | Node | Purpose | Default Level |
 | --- | --- | --- |

@@ -64,7 +64,7 @@ MoeMusic 由平台无关的核心库以及 Minecraft Mod 适配实现组成：
 - **聊天栏命令控制**：为玩家和管理员提供完整的聊天栏控制命令。
 - **投票切歌与权限管理**：普通玩家可参与投票切歌，管理员则可直接进行播放控制（立即播放、暂停、跳过、停止、定位播放进度）。
 - **集成的配置界面**：支持使用 Cloth Config 和 Mod Menu 插件提供游戏内配置菜单。
-- **高级权限系统集成**：自动检测并适配 LuckPerms（NeoForge/Fabric）或 Fabric Permissions API（Fabric），以实现细粒度的权限节点控制。
+- **高级权限系统集成**：自动检测并适配 LuckPerms（NeoForge/Fabric）或 Fabric Permission API（Fabric），以实现细粒度的权限节点控制。
 
 ---
 
@@ -91,7 +91,7 @@ MoeMusic 由平台无关的核心库以及 Minecraft Mod 适配实现组成：
 - Fabric API
 - Fabric Language Kotlin
 - Mod Menu （可选，提供模组列表）
-- Fabric Permissions API （服务端可选，提供高级权限接口）
+- 任意实现了`fabric-permissions-api-v0`或`fabric-permission-api-v1`的权限管理模组 （服务端可选，提供更精细的权限控制）
 
 ### NeoForge / Forge
 - Kotlin for Forge
@@ -190,7 +190,7 @@ MoeMusic 由平台无关的核心库以及 Minecraft Mod 适配实现组成：
 
 ## 权限节点
 
-在未安装 LuckPerms 或 Fabric Permissions API 时，MoeMusic 将检查 `moemusic.toml` 中定义的回退权限等级（0–5 级）。0–4 级对应原版 OP 等级（0 = 所有人，1 = 巡查员，2 = 游戏管理员，3 = 高级管理员，4 = 服主/OP）。将权限设置为 5 级时将对所有玩家默认禁用，仅可通过权限模组单独授权或在控制台执行。单人游戏房主（对应 0–4 级）和服务器控制台可直接跳过权限检查。
+在未安装权限管理模组时，MoeMusic 将检查 `moemusic.toml` 中定义的回退权限等级（0–5 级）。0–4 级对应原版 OP 等级（0 = 所有人，1 = 巡查员，2 = 游戏管理员，3 = 高级管理员，4 = 服主/OP）。将权限设置为 5 级时将对所有玩家默认禁用，仅可通过权限模组单独授权或在控制台执行。单人游戏房主（对应 0–4 级）和服务器控制台可直接跳过权限检查。
 
 | 权限节点 | 用途 | 默认 OP 等级 |
 | --- | --- | --- |
