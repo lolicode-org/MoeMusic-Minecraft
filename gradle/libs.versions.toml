@@ -6,11 +6,11 @@ moemusic-core = "1.5.0"
 velocity-api = "4.1.0-SNAPSHOT"
 
 # Kotlin, runtime libraries, and build tooling.
-kotlin = "2.4.10"
+kotlin = "2.4.20"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 ktoml = "0.7.1"
-slf4j = "2.0.18"
+slf4j = "2.0.19"
 shadow = "9.6.1"
 mod-publish-plugin = "2.2.0"
 
