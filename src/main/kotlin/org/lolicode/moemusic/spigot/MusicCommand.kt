@@ -46,6 +46,7 @@ import org.lolicode.moemusic.core.runtime.ServerRuntimeCoordinator
 import org.lolicode.moemusic.core.source.SelectionSessionManager
 import org.lolicode.moemusic.core.source.builtin.HttpMusicSource
 import java.util.Locale
+import java.util.logging.Level
 
 class MusicCommand(
     private val plugin: MoeMusicPlugin,
@@ -505,6 +506,7 @@ class MusicCommand(
                         ))
                     }
                 } catch (error: IllegalStateException) {
+                    plugin.logger.log(Level.SEVERE, "Failed to reload MoeMusic configuration", error)
                     Chat.failure(sender, LocalizedText.key("error.moemusic.reload.failed", error.message ?: "unknown error"))
                 } catch (error: Exception) {
                     fail(sender, error)
@@ -516,6 +518,7 @@ class MusicCommand(
                     ContentFilterRuleEditor.reloadFromDisk(ServerRuntimeCoordinator.configDir)
                     Chat.success(sender, LocalizedText.key("action.moemusic.filter.reloaded"))
                 } catch (error: IllegalStateException) {
+                    plugin.logger.log(Level.SEVERE, "Failed to reload MoeMusic filter configuration", error)
                     Chat.failure(sender, LocalizedText.key("error.moemusic.reload.failed", error.message ?: "unknown error"))
                 } catch (error: Exception) {
                     fail(sender, error)
@@ -1100,7 +1103,7 @@ class MusicCommand(
         if (UserFacingErrors.isExpected(error)) {
             plugin.logger.fine("MoeMusic command rejected: ${error.message}")
         } else {
-            plugin.logger.warning("MoeMusic command failed: ${error.message}")
+            plugin.logger.log(Level.SEVERE, "MoeMusic command failed for ${sender.name}: ${error.message}", error)
         }
         Chat.failure(sender, classify(sender, error))
     }

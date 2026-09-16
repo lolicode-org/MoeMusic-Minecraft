@@ -72,9 +72,11 @@ class SpigotNetworkChannel(
             }
             val inboundLimit = minOf(maxPayloadSize, FramedPayloadCodec.MAX_LEGACY_C2S_PAYLOAD_BYTES)
             if (message.size > inboundLimit) {
-                plugin.logger.warning(
-                    "Dropping oversized C2S packet $packetId from ${player.uniqueId} (size=${message.size}, limit=$inboundLimit)",
-                )
+                if (plugin.logger.isLoggable(Level.FINE)) {
+                    plugin.logger.fine(
+                        "Dropping oversized C2S packet $packetId from ${player.uniqueId} (size=${message.size}, limit=$inboundLimit)",
+                    )
+                }
                 return
             }
 
@@ -90,14 +92,21 @@ class SpigotNetworkChannel(
     override fun sendToServer(packetId: PacketId, payload: ByteArray) = Unit
 
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
-        if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) return
+        if (UserSessionRegistry.getActive(user.id) == null && packetId !in DIRECT_RESPONSE_IDS) {
+            if (plugin.logger.isLoggable(Level.FINE)) {
+                plugin.logger.fine("Skipping packet $packetId for inactive/standby client session ${user.displayName}")
+            }
+            return
+        }
         if (UserSessionRegistry.supportsFraming(user.id)) {
             if (payload.size <= FramedPayloadCodec.CHUNK_PAYLOAD_SIZE) {
                 val frame = try {
                     FramedPayloadCodec.encodeSingle(payload)
                 } catch (e: Exception) {
-                    plugin.logger.severe(
-                        "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                    plugin.logger.log(
+                        Level.SEVERE,
+                        "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}",
+                        e,
                     )
                     return
                 }
@@ -107,8 +116,10 @@ class SpigotNetworkChannel(
             val frames = try {
                 FramedPayloadCodec.encode(payload)
             } catch (e: Exception) {
-                plugin.logger.severe(
-                    "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}: ${e.message}",
+                plugin.logger.log(
+                    Level.SEVERE,
+                    "Failed to encode framed packet $packetId (size=${payload.size}) for client ${user.displayName}",
+                    e,
                 )
                 return
             }
@@ -147,8 +158,10 @@ class SpigotNetworkChannel(
                 singleFrame = try {
                     FramedPayloadCodec.encodeSingle(payload)
                 } catch (e: Exception) {
-                    plugin.logger.severe(
-                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                    plugin.logger.log(
+                        Level.SEVERE,
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size})",
+                        e,
                     )
                     null
                 }
@@ -158,8 +171,10 @@ class SpigotNetworkChannel(
                 frames = try {
                     FramedPayloadCodec.encode(payload)
                 } catch (e: Exception) {
-                    plugin.logger.severe(
-                        "Failed to encode framed broadcast packet $packetId (size=${payload.size}): ${e.message}",
+                    plugin.logger.log(
+                        Level.SEVERE,
+                        "Failed to encode framed broadcast packet $packetId (size=${payload.size})",
+                        e,
                     )
                     null
                 }
@@ -216,7 +231,7 @@ class SpigotNetworkChannel(
                     }
                 }
             }.onFailure { error ->
-                plugin.logger.severe("Failed to send MoeMusic packet $packetId to $userId: ${error.message}")
+                plugin.logger.log(Level.SEVERE, "Failed to send MoeMusic packet $packetId to $userId", error)
             }
         }
         if (Bukkit.isPrimaryThread()) task.run() else if (plugin.isEnabled) plugin.server.scheduler.runTask(plugin, task)

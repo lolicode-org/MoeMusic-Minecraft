@@ -24,6 +24,7 @@ import org.lolicode.moemusic.core.user.UserActionServiceImpl
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.TimeUnit
+import java.util.logging.Level
 
 class MoeMusicPlugin : JavaPlugin(), Listener {
     private lateinit var channel: SpigotNetworkChannel
@@ -55,7 +56,7 @@ class MoeMusicPlugin : JavaPlugin(), Listener {
         if (::commands.isInitialized) commands.close()
         if (::channel.isInitialized) channel.unregister()
         runCatching { ServerRuntimeCoordinator.serverShutdown(finalRuntime = true) }
-            .onFailure { logger.severe("Failed to shut down MoeMusic: ${it.message}") }
+            .onFailure { logger.log(Level.SEVERE, "Failed to shut down MoeMusic", it) }
     }
 
     @EventHandler
