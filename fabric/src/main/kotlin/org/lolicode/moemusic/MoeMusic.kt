@@ -55,7 +55,11 @@ object MoeMusic : ModInitializer {
         // Integrated singleplayer keeps the logical server runtime alive across world closes,
         // while a dedicated server tears it down with the process.
         ServerLifecycleEvents.SERVER_STOPPING.register { server ->
-            MoePlatform.serverShutdown(finalRuntime = server.isDedicatedServer)
+            runCatching {
+                MoePlatform.serverShutdown(finalRuntime = server.isDedicatedServer)
+            }.onFailure {
+                logger.error("Failed to shut down MoeMusic", it)
+            }
         }
 
         logger.info("MoeMusic server initialized.")

@@ -57,7 +57,11 @@ class MoeMusic {
     }
 
     private fun onServerStopping(event: ServerStoppingEvent) {
-        MoePlatform.serverShutdown(finalRuntime = event.server.isDedicatedServer)
+        runCatching {
+            MoePlatform.serverShutdown(finalRuntime = event.server.isDedicatedServer)
+        }.onFailure {
+            logger.error("Failed to shut down MoeMusic", it)
+        }
     }
 
     private fun onRegisterCommands(event: RegisterCommandsEvent) {

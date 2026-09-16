@@ -62,7 +62,7 @@ object NetworkSetup {
      */
     fun handleDisconnect(userId: UUID) {
         val removed = UserSessionRegistry.disconnect(userId) ?: return
-        logger.info(
+        logger.debug(
             "MoeMusic client session disconnected: user={} id={} participation={} locale={}",
             removed.user.displayName,
             userId,
@@ -82,7 +82,7 @@ object NetworkSetup {
         if (session.participation != UserSessionRegistry.Participation.ACTIVE) return
 
         UserSessionRegistry.standby(userId)
-        logger.info(
+        logger.debug(
             "MoeMusic client left active playback audience: user={} id={} locale={}",
             session.user.displayName,
             userId,
