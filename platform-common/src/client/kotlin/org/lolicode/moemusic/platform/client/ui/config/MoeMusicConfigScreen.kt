@@ -540,6 +540,78 @@ object MoeMusicConfigScreen {
                 }
                 .build()
         )
+        mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.rate_limit.skip_requests"),
+                current.media.rateLimit.skipRequests,
+            )
+                .setDefaultValue(defaultMedia.rateLimit.skipRequests)
+                .setTooltip(McText.translatable("config.moemusic.media.rate_limit.skip_requests.tooltip"))
+                .setSaveConsumer { count ->
+                    newMedia = newMedia.copy(rateLimit = newMedia.rateLimit.copy(skipRequests = count))
+                }
+                .build()
+        )
+        mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.rate_limit.vote_requests"),
+                current.media.rateLimit.voteRequests,
+            )
+                .setDefaultValue(defaultMedia.rateLimit.voteRequests)
+                .setTooltip(McText.translatable("config.moemusic.media.rate_limit.vote_requests.tooltip"))
+                .setSaveConsumer { count ->
+                    newMedia = newMedia.copy(rateLimit = newMedia.rateLimit.copy(voteRequests = count))
+                }
+                .build()
+        )
+        mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.rate_limit.playback_control_requests"),
+                current.media.rateLimit.playbackControlRequests,
+            )
+                .setDefaultValue(defaultMedia.rateLimit.playbackControlRequests)
+                .setTooltip(McText.translatable("config.moemusic.media.rate_limit.playback_control_requests.tooltip"))
+                .setSaveConsumer { count ->
+                    newMedia = newMedia.copy(rateLimit = newMedia.rateLimit.copy(playbackControlRequests = count))
+                }
+                .build()
+        )
+        mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.rate_limit.queue_read_requests"),
+                current.media.rateLimit.queueReadRequests,
+            )
+                .setDefaultValue(defaultMedia.rateLimit.queueReadRequests)
+                .setTooltip(McText.translatable("config.moemusic.media.rate_limit.queue_read_requests.tooltip"))
+                .setSaveConsumer { count ->
+                    newMedia = newMedia.copy(rateLimit = newMedia.rateLimit.copy(queueReadRequests = count))
+                }
+                .build()
+        )
+        mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.rate_limit.queue_mutation_requests"),
+                current.media.rateLimit.queueMutationRequests,
+            )
+                .setDefaultValue(defaultMedia.rateLimit.queueMutationRequests)
+                .setTooltip(McText.translatable("config.moemusic.media.rate_limit.queue_mutation_requests.tooltip"))
+                .setSaveConsumer { count ->
+                    newMedia = newMedia.copy(rateLimit = newMedia.rateLimit.copy(queueMutationRequests = count))
+                }
+                .build()
+        )
+        mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.rate_limit.selection_requests"),
+                current.media.rateLimit.selectionRequests,
+            )
+                .setDefaultValue(defaultMedia.rateLimit.selectionRequests)
+                .setTooltip(McText.translatable("config.moemusic.media.rate_limit.selection_requests.tooltip"))
+                .setSaveConsumer { count ->
+                    newMedia = newMedia.copy(rateLimit = newMedia.rateLimit.copy(selectionRequests = count))
+                }
+                .build()
+        )
 
         mediaCategory.addEntry(
             entryBuilder.startTextDescription(
