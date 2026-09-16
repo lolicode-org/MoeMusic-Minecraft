@@ -1,7 +1,7 @@
 [versions]
 # MoeMusic and target versions.
 moemusic-velocity = "1.5.0"
-moemusic-api = "2.2.0"
+moemusic-api = "2.3.0"
 moemusic-core = "1.5.0"
 velocity-api = "4.1.0-SNAPSHOT"
 
