@@ -132,7 +132,7 @@ class BadPacketsNetworkChannel(
     override fun sendToClient(user: MoeMusicUser, packetId: PacketId, payload: ByteArray) {
         val entity = (user as? MinecraftUser)?.entity() ?: return
         if (!canSendDirectly(user, packetId)) {
-            logger.warn(
+            logger.debug(
                 "Dropping packet {} to inactive client session {} because it is not standby-safe.",
                 packetId,
                 user.displayName,
