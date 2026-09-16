@@ -100,7 +100,7 @@ The platform adapters and loaders are organized by feature packages in `platform
 
 ### 5. Permissions
 - Advanced permissions are delegated to loader-local modules:
-  - Fabric binds through `fabric-permissions-api`.
+  - Fabric binds through `fabric-permission-api-v1` (with legacy `fabric-permissions-api-v0` fallback).
   - NeoForge handles checks by looking up LuckPerms directly if available, falling back to vanilla OP levels if not.
   - `:platform-common` accesses these checks uniformly via the `AdvancedPermissionChecker` abstraction.
 - All permission nodes live in `core/.../permission/PermissionNodes.kt`. `:platform-common` references them from there directly, avoiding duplicate definitions.
