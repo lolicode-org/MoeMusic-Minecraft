@@ -683,20 +683,26 @@ object MusicCommands {
     }
 
     private fun cmdQueue(source: CommandSourceStack, page: Int = 1): Int {
+        val user = sourceUser(source)
+        try {
+            MoePlatform.rateLimitService.checkQueueRead(user)
+        } catch (e: Exception) {
+            sendFailure(source, UserFacingErrors.classify(e))
+            return 0
+        }
         val currentTrack = MoePlatform.playbackController.currentContext?.track
-        val snapshot = MoePlatform.queue.userQueueSnapshot()
+        val total = MoePlatform.queue.userQueueSize()
 
-        if (currentTrack == null && snapshot.isEmpty()) {
+        if (currentTrack == null && total == 0) {
             sendSuccess(source, LocalizedText.key("action.moemusic.queue.empty"))
             return 1
         }
 
         val pageSize = COMMAND_SEARCH_PAGE_SIZE
-        val total = snapshot.size
         val totalPages = if (total == 0) 1 else ((total - 1) / pageSize) + 1
         val clampedPage = page.coerceIn(1, totalPages)
         val offset = (clampedPage - 1) * pageSize
-        val pageTracks = snapshot.drop(offset).take(pageSize)
+        val pageTracks = MoePlatform.queue.userQueueSlice(offset, pageSize)
 
         sendMultilineSuccess(
             source,
@@ -704,7 +710,7 @@ object MusicCommands {
                 if (totalPages > 1) {
                     add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.queue.header_paged", total, clampedPage, totalPages)))
                 } else {
-                    val totalShown = snapshot.size + (if (currentTrack != null) 1 else 0)
+                    val totalShown = total + (if (currentTrack != null) 1 else 0)
                     add(prefixedSuccessLine(source, LocalizedText.key("action.moemusic.queue.header", totalShown)))
                 }
                 if (clampedPage == 1) {
@@ -723,6 +729,12 @@ object MusicCommands {
 
     private fun cmdChoices(source: CommandSourceStack, sessionId: String, page: Int = 1): Int {
         val user = sourceUser(source)
+        try {
+            MoePlatform.rateLimitService.checkSelection(user)
+        } catch (e: Exception) {
+            sendFailure(source, UserFacingErrors.classify(e))
+            return 0
+        }
         val bypassOwnership = user?.let { PermissionResolver.hasPermission(source, PermissionNodes.QUEUE_CONTROL) } ?: true
         val session = SelectionSessionManager.getSession(sessionId, user?.id, bypassOwnership)
         if (session == null) {
@@ -825,8 +837,7 @@ object MusicCommands {
     }
 
     private fun cmdQueueRemoveByIndex(source: CommandSourceStack, index: Int): Int {
-        val snapshot = MoePlatform.queue.userQueueSnapshot()
-        val track = snapshot.getOrNull(index - 1)
+        val track = MoePlatform.queue.getQueuedTrack(index - 1)
         if (track == null) {
             sendFailure(source, LocalizedText.key("error.moemusic.queue.invalid_index"))
             return 0
@@ -895,9 +906,7 @@ object MusicCommands {
         source.server.playerList.players.forEach { player ->
             suggestions.add(player.gameProfile.name)
         }
-        runCatching { MoePlatform.playbackController.userQueueSnapshot() }.getOrNull()?.forEach { track ->
-            track.submittedByUserName?.let { suggestions.add(it) }
-        }
+        runCatching { MoePlatform.queue.distinctSubmitterNames() }.getOrNull()?.let(suggestions::addAll)
         for (suggestion in suggestions) {
             if (suggestion.lowercase().startsWith(input)) {
                 builder.suggest(suggestion)
