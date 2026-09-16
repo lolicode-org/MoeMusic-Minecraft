@@ -630,6 +630,26 @@ object MoeMusicConfigScreen {
                 .build()
         )
         mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.max_player_total_queued_tracks"),
+                current.media.maxPlayerTotalQueuedTracks,
+            )
+                .setDefaultValue(defaultMedia.maxPlayerTotalQueuedTracks)
+                .setTooltip(McText.translatable("config.moemusic.media.max_player_total_queued_tracks.tooltip"))
+                .setSaveConsumer { newMedia = newMedia.copy(maxPlayerTotalQueuedTracks = it) }
+                .build()
+        )
+        mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.max_player_total_queued_duration_seconds"),
+                current.media.maxPlayerTotalQueuedDurationSeconds,
+            )
+                .setDefaultValue(defaultMedia.maxPlayerTotalQueuedDurationSeconds)
+                .setTooltip(McText.translatable("config.moemusic.media.max_player_total_queued_duration_seconds.tooltip"))
+                .setSaveConsumer { newMedia = newMedia.copy(maxPlayerTotalQueuedDurationSeconds = it) }
+                .build()
+        )
+        mediaCategory.addEntry(
             entryBuilder.startIntSlider(
                 McText.translatable("config.moemusic.media.max_search_results_per_page"),
                 current.media.maxSearchResultsPerPage,
