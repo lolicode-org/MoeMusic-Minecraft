@@ -7,6 +7,7 @@ import org.lolicode.moemusic.api.isNullOrBlank
 import org.lolicode.moemusic.api.model.TrackAddResult
 import org.lolicode.moemusic.api.model.TrackInfo
 import org.lolicode.moemusic.api.model.artistDisplay
+import org.lolicode.moemusic.api.service.IRateLimitService
 import org.lolicode.moemusic.api.service.IUserActionService
 import org.lolicode.moemusic.api.service.PlaybackActionOutcome
 import org.lolicode.moemusic.clientcore.MoeMusicClientCoreBuildInfo
@@ -78,6 +79,9 @@ object MoePlatform {
 
     val requestRateLimiter: RequestRateLimiter
         get() = ServerRuntimeCoordinator.requestRateLimiter
+
+    val rateLimitService: IRateLimitService
+        get() = ServerRuntimeCoordinator.rateLimitService
 
     val userActionService: IUserActionService
         get() = ServerRuntimeCoordinator.userActionService
