@@ -602,23 +602,29 @@ class VelocityMusicCommand(
 
     private fun queue(source: CommandSource, page: Int = 1) {
         if (!require(source, PermissionNodes.QUEUE_VIEW)) return
+        val user = user(source)
+        try {
+            ServerRuntimeCoordinator.rateLimitService.checkQueueRead(user)
+        } catch (error: Exception) {
+            fail(source, error)
+            return
+        }
         val current = ServerRuntimeCoordinator.playbackController.currentContext?.track
-        val queued = ServerRuntimeCoordinator.queue.userQueueSnapshot()
-        if (current == null && queued.isEmpty()) {
+        val total = ServerRuntimeCoordinator.queue.userQueueSize()
+        if (current == null && total == 0) {
             VelocityChat.success(source, LocalizedText.key("action.moemusic.queue.empty"))
             return
         }
         val pageSize = 8
-        val total = queued.size
         val totalPages = if (total == 0) 1 else ((total - 1) / pageSize) + 1
         val clampedPage = page.coerceIn(1, totalPages)
         val offset = (clampedPage - 1) * pageSize
-        val pageTracks = queued.drop(offset).take(pageSize)
+        val pageTracks = ServerRuntimeCoordinator.queue.userQueueSlice(offset, pageSize)
         val lines = buildList {
             if (totalPages > 1) {
                 add(prefixed(source, LocalizedText.key("action.moemusic.queue.header_paged", total, clampedPage, totalPages)))
             } else {
-                add(prefixed(source, LocalizedText.key("action.moemusic.queue.header", queued.size + if (current == null) 0 else 1)))
+                add(prefixed(source, LocalizedText.key("action.moemusic.queue.header", total + if (current == null) 0 else 1)))
             }
             if (clampedPage == 1) {
                 current?.let { add(queueLine(source, null, it, true)) }
@@ -680,7 +686,7 @@ class VelocityMusicCommand(
         if (args.size == 1) {
             val index = args[0].toIntOrNull()
                 ?: return VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.invalid_index"))
-            val track = ServerRuntimeCoordinator.queue.userQueueSnapshot().getOrNull(index - 1)
+            val track = ServerRuntimeCoordinator.queue.getQueuedTrack(index - 1)
                 ?: return VelocityChat.failure(source, LocalizedText.key("error.moemusic.queue.invalid_index"))
             val outcome = ServerRuntimeCoordinator.userActionService.removeQueuedTrackByEntryId(
                 track.sourceId.orEmpty(),
@@ -723,9 +729,8 @@ class VelocityMusicCommand(
                     builder.suggest(player.username)
                 }
             }
-            ServerRuntimeCoordinator.queue.userQueueSnapshot().forEach { track ->
-                val name = track.submittedByUserName
-                if (!name.isNullOrBlank() && name.lowercase().startsWith(remaining)) {
+            ServerRuntimeCoordinator.queue.distinctSubmitterNames().forEach { name ->
+                if (name.lowercase().startsWith(remaining)) {
                     builder.suggest(name)
                 }
             }
@@ -999,6 +1004,12 @@ class VelocityMusicCommand(
     private fun choicesCommand(source: CommandSource, sessionId: String, page: Int) {
         if (!require(source, PermissionNodes.SUBMIT)) return
         val u = user(source)
+        try {
+            ServerRuntimeCoordinator.rateLimitService.checkSelection(u)
+        } catch (error: Exception) {
+            fail(source, error)
+            return
+        }
         val bypass = u?.let { hasPermission(source, PermissionNodes.QUEUE_CONTROL) } ?: true
         val session = SelectionSessionManager.getSession(sessionId, u?.id, bypass)
         if (session == null) {
