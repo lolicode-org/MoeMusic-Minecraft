@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Configuration>
   <Loggers>
-    <Logger name="org.lolicode.moemusic" level="debug" additivity="true">
+    <Logger name="org.lolicode.moemusic" level="debug" additivity="false">
       <AppenderRef ref="SysOut"/>
-      <AppenderRef ref="ServerGuiConsole"/>
+      <AppenderRef ref="ServerGuiConsole" level="info"/>
+      <AppenderRef ref="LatestFile" level="info"/>
+      <AppenderRef ref="DebugFile"/>
     </Logger>
   </Loggers>
 </Configuration>
