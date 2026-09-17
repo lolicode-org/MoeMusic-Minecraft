@@ -4,6 +4,7 @@ main: org.lolicode.moemusic.spigot.MoeMusicPlugin
 api-version: '1.18'
 description: Server-side synced music playback for Spigot
 authors: [KoishiMoe]
+website: https://github.com/lolicode-org/MoeMusic-Minecraft
 libraries:
   - org.jetbrains.kotlin:kotlin-stdlib:${kotlinRuntimeVersion}
   - org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:${coroutinesVersion}
