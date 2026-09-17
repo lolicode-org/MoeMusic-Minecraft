@@ -651,6 +651,16 @@ object MoeMusicConfigScreen {
                 .build()
         )
         mediaCategory.addEntry(
+            entryBuilder.startIntField(
+                McText.translatable("config.moemusic.media.max_total_queued_tracks"),
+                current.media.maxTotalQueuedTracks,
+            )
+                .setDefaultValue(defaultMedia.maxTotalQueuedTracks)
+                .setTooltip(McText.translatable("config.moemusic.media.max_total_queued_tracks.tooltip"))
+                .setSaveConsumer { newMedia = newMedia.copy(maxTotalQueuedTracks = it) }
+                .build()
+        )
+        mediaCategory.addEntry(
             entryBuilder.startIntSlider(
                 McText.translatable("config.moemusic.media.max_search_results_per_page"),
                 current.media.maxSearchResultsPerPage,
