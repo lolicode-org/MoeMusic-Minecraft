@@ -34,6 +34,7 @@ import java.util.UUID
     name = "MoeMusic",
     version = MoeMusicVelocityPlugin.VERSION,
     description = "Global synced music playback for Velocity",
+    url = "https://github.com/lolicode-org/MoeMusic-Minecraft",
     authors = ["KoishiMoe"],
 )
 class MoeMusicVelocityPlugin @Inject constructor(
