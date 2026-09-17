@@ -388,13 +388,15 @@ jobs:
             --arg tag "$platform_tag" \
             '{id: $id, name: $name, branch: $branch, commit: $commit, tag: $tag}' > "tag-info-${{ matrix.id }}.json"
 
+          mkdir -p dist
+          cp build/libs/*.jar dist/
+          cp "tag-info-${{ matrix.id }}.json" dist/
+
       - name: upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: jars-${{ matrix.id }}
-          path: |
-            build/libs/*.jar
-            tag-info-${{ matrix.id }}.json
+          path: dist/
           if-no-files-found: error
 
   release:
@@ -424,6 +426,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # Flatten downloaded artifacts in case subdirectories exist
+          find release-jars -mindepth 2 -type f -exec mv -t release-jars/ {} +
+          find release-jars -mindepth 1 -type d -empty -delete
 
           tag="${{ needs.prepare.outputs.tag }}"
           title="${{ needs.prepare.outputs.title }}"
