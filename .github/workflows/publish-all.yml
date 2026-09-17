@@ -76,16 +76,34 @@ on:
         options: [stable, beta, alpha]
         required: true
         default: 'stable'
+      release_version:
+        description: 'Explicit release version (e.g. 1.5.0; leave empty to auto-detect from CHANGELOG.md)'
+        type: string
+        required: false
+        default: ''
       changelog_branch:
         description: 'Branch to read CHANGELOG.md from'
         type: string
         required: false
         default: 'changelog'
+
+      # Destinations
+      publish_github:
+        description: 'Publish unified GitHub release'
+        type: boolean
+        required: false
+        default: true
+      publish_modrinth:
+        description: 'Publish to Modrinth'
+        type: boolean
+        required: false
+        default: true
       publish_curseforge:
         description: 'Publish to CurseForge'
         type: boolean
         required: false
         default: false
+
       dry_run:
         description: 'Build and validate publish tasks without uploading'
         type: boolean
@@ -93,14 +111,313 @@ on:
         default: true
 
 jobs:
-  dispatch:
-    name: dispatch releases
+  prepare:
+    name: prepare release
     runs-on: ubuntu-latest
     permissions:
-      actions: write
+      contents: read
+    outputs:
+      matrix: ${{ steps.setup.outputs.matrix }}
+      version: ${{ steps.setup.outputs.version }}
+      tag: ${{ steps.setup.outputs.tag }}
+      title: ${{ steps.setup.outputs.title }}
+      prerelease: ${{ steps.setup.outputs.prerelease }}
+      has_builds: ${{ steps.setup.outputs.has_builds }}
+    steps:
+      - name: checkout changelog
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.changelog_branch }}
+
+      - name: setup release metadata and build matrix
+        id: setup
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          input_version="${{ inputs.release_version }}"
+          version=""
+          if [[ -n "$input_version" ]]; then
+            version="$input_version"
+          elif [[ -f CHANGELOG.md ]]; then
+            version=$(sed -nE 's/^## .*\((v?([0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?))\).*/\2/p' CHANGELOG.md | head -n1)
+            if [[ -z "$version" ]]; then
+              version=$(sed -nE 's/^## v?([0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?).*/\1/p' CHANGELOG.md | head -n1)
+            fi
+          fi
+
+          if [[ -z "$version" ]]; then
+            echo "Failed to detect release version from CHANGELOG.md and no release_version was provided." >&2
+            exit 1
+          fi
+
+          tag="v${version#v}"
+          title="MoeMusic $tag"
+
+          if [[ -f CHANGELOG.md ]]; then
+            awk '/^## / { count++; if (count == 2) exit } count == 1 { print }' CHANGELOG.md > release-notes.md
+          fi
+          if [[ ! -s release-notes.md ]]; then
+            echo "See repository history for changes." > release-notes.md
+          fi
+
+          version_type="${{ inputs.version_type }}"
+          prerelease="false"
+          if [[ "$version_type" == "beta" || "$version_type" == "alpha" ]]; then
+            prerelease="true"
+          fi
+
+          python3 -c '
+          import json, os, sys
+
+          branch_enabled = {
+              "26_3": "${{ inputs.branch_26_3 }}".lower() == "true",
+              "26_2": "${{ inputs.branch_26_2 }}".lower() == "true",
+              "26_1": "${{ inputs.branch_26_1 }}".lower() == "true",
+              "1_21_1": "${{ inputs.branch_1_21_1 }}".lower() == "true",
+              "1_20_1": "${{ inputs.branch_1_20_1 }}".lower() == "true",
+              "1_19": "${{ inputs.branch_1_19 }}".lower() == "true",
+              "1_18_2": "${{ inputs.branch_1_18_2 }}".lower() == "true",
+              "spigot": "${{ inputs.branch_spigot }}".lower() == "true",
+              "velocity": "${{ inputs.branch_velocity }}".lower() == "true",
+          }
+          loader_enabled = {
+              "fabric": "${{ inputs.loader_fabric }}".lower() == "true",
+              "neoforge": "${{ inputs.loader_neoforge }}".lower() == "true",
+              "forge": "${{ inputs.loader_forge }}".lower() == "true",
+          }
+
+          mod_configs = [
+              ("version/26.3", "26_3", "Minecraft 26.3", "25", ["fabric", "neoforge"]),
+              ("version/26.2", "26_2", "Minecraft 26.2", "25", ["fabric", "neoforge"]),
+              ("version/26.1", "26_1", "Minecraft 26.1", "25", ["fabric", "neoforge"]),
+              ("version/1.21.1", "1_21_1", "Minecraft 1.21.1", "21", ["fabric", "neoforge", "forge"]),
+              ("version/1.20.1", "1_20_1", "Minecraft 1.20.1", "21", ["fabric", "forge"]),
+              ("version/1.19", "1_19", "Minecraft 1.19", "21", ["fabric", "forge"]),
+              ("version/1.18.2", "1_18_2", "Minecraft 1.18.2", "21", ["fabric", "forge"]),
+          ]
+
+          targets = []
+          for branch, tid, name, java, supported in mod_configs:
+              if branch_enabled.get(tid):
+                  active_loaders = [l for l in supported if loader_enabled.get(l)]
+                  if active_loaders:
+                      targets.append({
+                          "id": tid,
+                          "name": name,
+                          "branch": branch,
+                          "type": "mod",
+                          "java_version": java,
+                          "loaders": ",".join(active_loaders),
+                      })
+
+          if branch_enabled.get("spigot"):
+              targets.append({
+                  "id": "spigot",
+                  "name": "Spigot Plugin",
+                  "branch": "spigot",
+                  "type": "plugin",
+                  "java_version": "17",
+                  "loaders": "",
+              })
+
+          if branch_enabled.get("velocity"):
+              targets.append({
+                  "id": "velocity",
+                  "name": "Velocity Plugin",
+                  "branch": "velocity",
+                  "type": "plugin",
+                  "java_version": "25",
+                  "loaders": "",
+              })
+
+          if not targets:
+              sys.stderr.write("No targets selected or no supported loaders active.\n")
+              sys.exit(1)
+
+          matrix_json = json.dumps(targets)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={matrix_json}\n")
+              f.write("has_builds=true\n")
+          '
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### 🎯 Release Preparation Summary"
+            echo ""
+            echo "- **Tag:** \`$tag\`"
+            echo "- **Title:** \`$title\`"
+            echo "- **Channel:** \`$version_type\`"
+            echo "- **Pre-release:** \`$prerelease\`"
+            echo "- **Dry Run:** \`${{ inputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-metadata
+          path: release-notes.md
+
+  build-and-publish:
+    name: build ${{ matrix.name }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    permissions:
       contents: read
     steps:
-      - name: dispatch workflows
+      - name: checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.branch }}
+          fetch-depth: 0
+
+      - name: setup jdk
+        uses: actions/setup-java@v6
+        with:
+          java-version: ${{ matrix.java_version }}
+          distribution: 'zulu'
+
+      - name: setup gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: false
+
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: build and publish to sites
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+          CHANGELOG_BRANCH: ${{ inputs.changelog_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          changelog_branch="$CHANGELOG_BRANCH"
+          changelog_file="$RUNNER_TEMP/changelog.md"
+
+          git fetch --no-tags origin "+refs/heads/$changelog_branch:refs/remotes/origin/$changelog_branch"
+          git show "refs/remotes/origin/$changelog_branch:CHANGELOG.md" > "$changelog_file"
+
+          destinations=()
+          if [[ "${{ inputs.publish_modrinth }}" == "true" ]]; then
+            destinations+=("modrinth")
+          fi
+          if [[ "${{ inputs.publish_curseforge }}" == "true" ]]; then
+            destinations+=("curseforge")
+          fi
+          dest_str="$(IFS=,; echo "${destinations[*]}")"
+
+          commitish="$(git rev-parse HEAD)"
+
+          if [[ "${{ matrix.type }}" == "mod" ]]; then
+            gradle_args=(
+              -Pmoemusic.useCompositeShared=false
+              -Pmoemusic.publish.loaders="${{ matrix.loaders }}"
+              -Pmoemusic.publish.type="${{ inputs.version_type }}"
+              -Pmoemusic.publish.branch="${{ matrix.branch }}"
+              -Pmoemusic.publish.commitish="$commitish"
+              -Pmoemusic.publish.changelogFile="$changelog_file"
+              -Pmoemusic.publish.dryRun="${{ inputs.dry_run }}"
+            )
+            if [[ -n "$dest_str" ]]; then
+              gradle_args+=(-Pmoemusic.publish.destinations="$dest_str")
+              ./gradlew "${gradle_args[@]}" buildModJars publishMods --stacktrace
+            else
+              ./gradlew "${gradle_args[@]}" buildModJars --stacktrace
+            fi
+          else
+            gradle_args=(
+              -Pmoemusic.publish.type="${{ inputs.version_type }}"
+              -Pmoemusic.publish.commitish="$commitish"
+              -Pmoemusic.publish.changelogFile="$changelog_file"
+              -Pmoemusic.publish.dryRun="${{ inputs.dry_run }}"
+            )
+            if [[ -n "$dest_str" ]]; then
+              gradle_args+=(-Pmoemusic.publish.destinations="$dest_str")
+              ./gradlew "${gradle_args[@]}" build publishMods --stacktrace
+            else
+              ./gradlew "${gradle_args[@]}" build --stacktrace
+            fi
+          fi
+
+          # Determine target branch git tag based on the built jar artifact version
+          branch="${{ matrix.branch }}"
+          branch_version="${branch#version/}"
+          jar_file="$(ls build/libs/*.jar | head -n1)"
+          jar_name="$(basename "$jar_file" .jar)"
+
+          if [[ "${{ matrix.type }}" == "mod" ]]; then
+            version="$(echo "$jar_name" | sed -E 's/^moemusic-[^-]+-(.+)$/\1/')"
+            modver="${version%+$branch_version}"
+            modver="${modver%+*}"
+            platform_tag="mod/${branch_version}/v${modver}"
+          elif [[ "${{ matrix.id }}" == "spigot" ]]; then
+            version="$(echo "$jar_name" | sed -E 's/^moemusic-spigot-(.+)$/\1/')"
+            platform_tag="spigot/v${version}"
+          elif [[ "${{ matrix.id }}" == "velocity" ]]; then
+            version="$(echo "$jar_name" | sed -E 's/^moemusic-velocity-(.+)$/\1/')"
+            platform_tag="velocity/v${version}"
+          fi
+
+          if [[ -z "${platform_tag:-}" ]]; then
+            echo "Failed to determine platform tag for ${{ matrix.id }}" >&2
+            exit 1
+          fi
+
+          echo "Platform tag: $platform_tag for commit: $commitish on branch: $branch"
+
+          jq -n \
+            --arg id "${{ matrix.id }}" \
+            --arg name "${{ matrix.name }}" \
+            --arg branch "$branch" \
+            --arg commit "$commitish" \
+            --arg tag "$platform_tag" \
+            '{id: $id, name: $name, branch: $branch, commit: $commit, tag: $tag}' > "tag-info-${{ matrix.id }}.json"
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: jars-${{ matrix.id }}
+          path: |
+            build/libs/*.jar
+            tag-info-${{ matrix.id }}.json
+          if-no-files-found: error
+
+  release:
+    name: create github release
+    needs: [prepare, build-and-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: download release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-metadata
+          path: release-metadata
+
+      - name: download all jars
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jars-*
+          merge-multiple: true
+          path: release-jars
+
+      - name: summarize and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -108,98 +425,90 @@ jobs:
         run: |
           set -euo pipefail
 
-          version_type="${{ inputs.version_type }}"
-          changelog_branch="${{ inputs.changelog_branch }}"
-          publish_curseforge="${{ inputs.publish_curseforge }}"
+          tag="${{ needs.prepare.outputs.tag }}"
+          title="${{ needs.prepare.outputs.title }}"
+          prerelease="${{ needs.prepare.outputs.prerelease }}"
           dry_run="${{ inputs.dry_run }}"
-          loader_fabric="${{ inputs.loader_fabric }}"
-          loader_neoforge="${{ inputs.loader_neoforge }}"
-          loader_forge="${{ inputs.loader_forge }}"
+          publish_github="${{ inputs.publish_github }}"
+          notes_file="release-metadata/release-notes.md"
 
-          repo="${{ github.repository }}"
-          server_url="${{ github.server_url }}"
+          echo "### 📦 Unified Release: $title ($tag)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| File | Size |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
 
-          declare -a branches=()
+          jar_count=0
+          for jar in release-jars/*.jar; do
+            if [[ -f "$jar" ]]; then
+              jar_name="$(basename "$jar")"
+              jar_size="$(du -h "$jar" | cut -f1)"
+              echo "| \`$jar_name\` | $jar_size |" >> "$GITHUB_STEP_SUMMARY"
+              ((jar_count++)) || true
+            fi
+          done
 
-          if [[ "${{ inputs.branch_26_3 }}" == "true" ]]; then
-            branches+=("version/26.3")
-          fi
-          if [[ "${{ inputs.branch_26_2 }}" == "true" ]]; then
-            branches+=("version/26.2")
-          fi
-          if [[ "${{ inputs.branch_26_1 }}" == "true" ]]; then
-            branches+=("version/26.1")
-          fi
-          if [[ "${{ inputs.branch_1_21_1 }}" == "true" ]]; then
-            branches+=("version/1.21.1")
-          fi
-          if [[ "${{ inputs.branch_1_20_1 }}" == "true" ]]; then
-            branches+=("version/1.20.1")
-          fi
-          if [[ "${{ inputs.branch_1_19 }}" == "true" ]]; then
-            branches+=("version/1.19")
-          fi
-          if [[ "${{ inputs.branch_1_18_2 }}" == "true" ]]; then
-            branches+=("version/1.18.2")
-          fi
-          if [[ "${{ inputs.branch_spigot }}" == "true" ]]; then
-            branches+=("spigot")
-          fi
-          if [[ "${{ inputs.branch_velocity }}" == "true" ]]; then
-            branches+=("velocity")
-          fi
-
-          if [[ ${#branches[@]} -eq 0 ]]; then
-            echo "No target branches selected." >&2
+          if [[ $jar_count -eq 0 ]]; then
+            echo "No jar files found in release-jars." >&2
             exit 1
           fi
 
-          echo "Dispatching release workflows for ${#branches[@]} target branch(es)..."
+          echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          {
-            echo "### 🚀 Multi-Platform Release Dispatch Summary"
-            echo ""
-            echo "| Branch | Target Workflow | Parameters | Actions Link |"
-            echo "| --- | --- | --- | --- |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          for branch in "${branches[@]}"; do
-            echo "==> Dispatching branch: $branch"
-
-            args=(
-              -f version_type="$version_type"
-              -f changelog_branch="$changelog_branch"
-              -f publish_curseforge="$publish_curseforge"
-              -f dry_run="$dry_run"
-            )
-            param_summary="channel: \`$version_type\`, dry_run: \`$dry_run\`"
-
-            if [[ "$branch" == version/* ]]; then
-              args+=(-f loader_fabric="$loader_fabric")
-              param_summary="fabric: \`$loader_fabric\`, $param_summary"
-
-              case "$branch" in
-                "version/1.18.2"|"version/1.19"|"version/1.20.1")
-                  args+=(-f loader_forge="$loader_forge")
-                  param_summary="forge: \`$loader_forge\`, $param_summary"
-                  ;;
-                "version/1.21.1")
-                  args+=(-f loader_forge="$loader_forge" -f loader_neoforge="$loader_neoforge")
-                  param_summary="forge: \`$loader_forge\`, neoforge: \`$loader_neoforge\`, $param_summary"
-                  ;;
-                *)
-                  args+=(-f loader_neoforge="$loader_neoforge")
-                  param_summary="neoforge: \`$loader_neoforge\`, $param_summary"
-                  ;;
-              esac
+          # 1. Unified GitHub Release
+          if [[ "$dry_run" == "true" ]]; then
+            echo "ℹ️ **Dry run enabled**: GitHub release creation skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "Would have published $jar_count jar(s) under release \`$tag\` with title \`$title\`."
+          elif [[ "$publish_github" != "true" ]]; then
+            echo "ℹ️ **GitHub publishing disabled**: GitHub release creation skipped." >> "$GITHUB_STEP_SUMMARY"
+          else
+            extra_flags=()
+            if [[ "$prerelease" == "true" ]]; then
+              extra_flags+=(--prerelease)
             fi
 
-            gh workflow run "publish.yml" --ref "$branch" "${args[@]}"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag already exists on GitHub. Updating..."
+              gh release edit "$tag" --title "$title" --notes-file "$notes_file" "${extra_flags[@]}"
+              gh release upload "$tag" release-jars/*.jar --clobber
+              echo "Updated release: https://github.com/${GH_REPO}/releases/tag/${tag}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Creating new release $tag on GitHub..."
+              gh release create "$tag" release-jars/*.jar \
+                --title "$title" \
+                --notes-file "$notes_file" \
+                --target "${{ github.sha }}" \
+                "${extra_flags[@]}"
+              echo "Created release: https://github.com/${GH_REPO}/releases/tag/${tag}" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
 
-            actions_url="${server_url}/${repo}/actions/workflows/publish.yml?query=branch%3A${branch//\//%2F}"
-            echo "Dispatched publish.yml on $branch successfully."
-            echo "| \`$branch\` | \`publish.yml\` | $param_summary | [View Runs]($actions_url) |" >> "$GITHUB_STEP_SUMMARY"
+          # 2. Version Branch Tags
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### 🏷️ Version Branch Tags" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Target | Branch | Commit | Tag | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- | --- | --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+
+          shopt -s nullglob
+          for info_file in release-jars/tag-info-*.json; do
+            ptarget="$(jq -r '.name' "$info_file")"
+            pbranch="$(jq -r '.branch' "$info_file")"
+            pcommit="$(jq -r '.commit' "$info_file")"
+            ptag="$(jq -r '.tag' "$info_file")"
+
+            if [[ "$dry_run" == "true" ]]; then
+              echo "| $ptarget | \`$pbranch\` | \`${pcommit:0:7}\` | \`$ptag\` | ℹ️ Dry run (skipped) |" >> "$GITHUB_STEP_SUMMARY"
+              echo "Dry run: would create tag $ptag on commit $pcommit ($pbranch)"
+            else
+              echo "Applying tag $ptag to commit $pcommit on $pbranch..."
+              if gh api "repos/{owner}/{repo}/git/ref/tags/$ptag" >/dev/null 2>&1; then
+                echo "Tag $ptag already exists on GitHub. Updating to $pcommit..."
+                gh api -X PATCH "repos/{owner}/{repo}/git/refs/tags/$ptag" -f sha="$pcommit" -F force=true
+                echo "| $ptarget | \`$pbranch\` | \`${pcommit:0:7}\` | \`$ptag\` | 🔄 Updated |" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "Creating tag $ptag at $pcommit..."
+                gh api "repos/{owner}/{repo}/git/refs" -f ref="refs/tags/$ptag" -f sha="$pcommit"
+                echo "| $ptarget | \`$pbranch\` | \`${pcommit:0:7}\` | \`$ptag\` | ✅ Created |" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            fi
           done
-
-          echo ""
-          echo "All workflows dispatched successfully!"
