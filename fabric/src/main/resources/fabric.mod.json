@@ -8,9 +8,9 @@
 		"KoishiMoe"
 	],
 	"contact": {
-		"homepage": "https://github.com/lolicode-org/MoeMusic",
-		"sources": "https://github.com/lolicode-org/MoeMusic",
-		"issues": "https://github.com/lolicode-org/MoeMusic/issues"
+		"homepage": "https://github.com/lolicode-org/MoeMusic-Minecraft",
+		"sources": "https://github.com/lolicode-org/MoeMusic-Minecraft",
+		"issues": "https://github.com/lolicode-org/MoeMusic-Minecraft/issues"
 	},
 	"license": "AGPL-3.0-or-later",
 	"icon": "assets/moemusic/icon.png",
