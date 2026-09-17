@@ -1,12 +1,14 @@
 modLoader="kotlinforforge"
 loaderVersion="[5.11,)"
 license="${mod_license}"
+issueTrackerURL="https://github.com/lolicode-org/MoeMusic-Minecraft/issues"
 
 [[mods]]
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
-displayURL="https://github.com/lolicode-org/MoeMusic"
+displayURL="https://github.com/lolicode-org/MoeMusic-Minecraft"
+displayTest="IGNORE_ALL_VERSION"
 authors="KoishiMoe"
 description='''
 Server-synced music streaming for Minecraft.
