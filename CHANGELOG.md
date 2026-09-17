@@ -1,3 +1,8 @@
+## 2026-09-16 (v1.5.1)
+- Added config to limit the max number of tracks in the user queue (default 500).
+
+- 添加了限制玩家点歌队列中最大曲目数量的设置（默认500首）。
+
 ## 2026-09-16 (v1.5.0)
 
 - Added support for Minecraft 26.3.
