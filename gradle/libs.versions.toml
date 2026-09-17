@@ -1,8 +1,8 @@
 [versions]
 # MoeMusic and target versions.
-moemusic-velocity = "1.5.0"
+moemusic-velocity = "1.5.1"
 moemusic-api = "2.3.0"
-moemusic-core = "1.5.0"
+moemusic-core = "1.5.1"
 velocity-api = "4.1.0-SNAPSHOT"
 
 # Kotlin, runtime libraries, and build tooling.
